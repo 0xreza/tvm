@@ -2,6 +2,7 @@
  *  Copyright (c) 2016 by Contributors
  * \file cpu_device_api.cc
  */
+#include <cuda_runtime.h>
 #include <dmlc/logging.h>
 #include <dmlc/thread_local.h>
 #include <tvm/runtime/registry.h>
@@ -24,26 +25,30 @@ class CPUDeviceAPI final : public DeviceAPI {
                        size_t nbytes,
                        size_t alignment,
                        TVMType type_hint) final {
+    // // For now just use cuda malloc for CPU data spaces
+    //std::cout << "Alloc CPU data space " << nbytes << std::endl;
     void* ptr;
-#if _MSC_VER
-    ptr = _aligned_malloc(nbytes, alignment);
-    if (ptr == nullptr) throw std::bad_alloc();
-#elif defined(_LIBCPP_SGX_CONFIG)
-    ptr = memalign(alignment, nbytes);
-    if (ptr == nullptr) throw std::bad_alloc();
-#else
-    int ret = posix_memalign(&ptr, alignment, nbytes);
-    if (ret != 0) throw std::bad_alloc();
-#endif
+    cudaMallocHost(&ptr, nbytes);
+// #if _MSC_VER
+//     ptr = _aligned_malloc(nbytes, alignment);
+//     if (ptr == nullptr) throw std::bad_alloc();
+// #elif defined(_LIBCPP_SGX_CONFIG)
+//     ptr = memalign(alignment, nbytes);
+//     if (ptr == nullptr) throw std::bad_alloc();
+// #else
+//     int ret = posix_memalign(&ptr, alignment, nbytes);
+//     if (ret != 0) throw std::bad_alloc();
+// #endif
     return ptr;
   }
 
   void FreeDataSpace(TVMContext ctx, void* ptr) final {
-#if _MSC_VER
-    _aligned_free(ptr);
-#else
-    free(ptr);
-#endif
+// #if _MSC_VER
+//     _aligned_free(ptr);
+// #else
+//     free(ptr);
+// #endif
+    cudaFree(ptr);
   }
 
   void CopyDataFromTo(const void* from,

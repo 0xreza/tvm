@@ -32,9 +32,11 @@ class CUDAModuleNode : public runtime::ModuleNode {
                           std::string cuda_source)
       : data_(data), fmt_(fmt), fmap_(fmap), cuda_source_(cuda_source) {
     std::fill(module_.begin(), module_.end(), nullptr);
+    // std::cout << "Creating CUDAModuleNode" << std::endl;
   }
   // destructor
   ~CUDAModuleNode() {
+    // std::cout << "Deleting CUDAModuleNode" << std::endl;
     for (size_t i = 0; i < module_.size(); ++i) {
       if (module_[i] != nullptr) {
         CUDA_CALL(cudaSetDevice(static_cast<int>(i)));
@@ -91,7 +93,10 @@ class CUDAModuleNode : public runtime::ModuleNode {
       CUDA_DRIVER_CALL(cuModuleLoadData(&(module_[device_id]), data_.c_str()));
     }
     CUfunction func;
+
+    CUDA_LOG(
     CUresult result = cuModuleGetFunction(&func, module_[device_id], func_name.c_str());
+    )
     if (result != CUDA_SUCCESS) {
       const char *msg;
       cuGetErrorName(result, &msg);
@@ -112,9 +117,10 @@ class CUDAModuleNode : public runtime::ModuleNode {
     }
     CUdeviceptr global;
     size_t nbytes;
-
+    CUDA_LOG(
     CUresult result = cuModuleGetGlobal(&global, &nbytes,
                                         module_[device_id], global_name.c_str());
+    )
     CHECK_EQ(nbytes, expect_nbytes);
     if (result != CUDA_SUCCESS) {
       const char *msg;
@@ -150,16 +156,26 @@ class CUDAWrappedFunc {
             const std::string& func_name,
             size_t num_void_args,
             const std::vector<std::string>& thread_axis_tags) {
+    // std::cout << now() << " INIT " << func_name << std::endl;
     m_ = m;
     sptr_ = sptr;
     func_name_ = func_name;
     std::fill(fcache_.begin(), fcache_.end(), nullptr);
     thread_axis_cfg_.Init(num_void_args, thread_axis_tags);
+
+    // Eager load module
+    int device_id;
+    CUDA_CALL(cudaGetDevice(&device_id));
+    if (fcache_[device_id] == nullptr) {
+      fcache_[device_id] = m_->GetFunc(device_id, func_name_);
+    }
+
   }
   // invoke the function with void arguments
   void operator()(TVMArgs args,
                   TVMRetValue* rv,
                   void** void_args) const {
+    // std::cout << now() << " EXEC " << func_name_ << std::endl;
     int device_id;
     CUDA_CALL(cudaGetDevice(&device_id));
     if (fcache_[device_id] == nullptr) {
@@ -167,6 +183,7 @@ class CUDAWrappedFunc {
     }
     CUstream strm = static_cast<CUstream>(CUDAThreadEntry::ThreadLocal()->stream);
     ThreadWorkLoad wl = thread_axis_cfg_.Extract(args);
+    CUDA_LOG(
     CUresult result = cuLaunchKernel(
         fcache_[device_id],
         wl.grid_dim(0),
@@ -176,6 +193,8 @@ class CUDAWrappedFunc {
         wl.block_dim(1),
         wl.block_dim(2),
         0, strm, void_args, 0);
+    )
+    REGULAR_LOG("cuLaunchKernel " << func_name_ << " stream is " << strm);
     if (result != CUDA_SUCCESS && result != CUDA_ERROR_DEINITIALIZED) {
       const char *msg;
       cuGetErrorName(result, &msg);
@@ -194,6 +213,7 @@ class CUDAWrappedFunc {
       }
       LOG(FATAL) << os.str();
     }
+    // CUDA_CALL(cudaStreamSynchronize(static_cast<cudaStream_t>(strm)));
   }
 
  private:

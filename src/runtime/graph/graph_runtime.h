@@ -47,6 +47,15 @@ struct TVMOpParam {
  */
 class GraphRuntime : public ModuleNode {
  public:
+
+  // GraphRuntime() : ModuleNode() {
+  //   std::cout << "Creating GraphRuntime" << std::endl;
+  // }
+
+  // virtual ~GraphRuntime() {
+  //   std::cout << "Destroying GraphRuntime" << std::endl;
+  // }
+
   /*!
    * \brief Get member function to front-end
    * \param name The name of the function.

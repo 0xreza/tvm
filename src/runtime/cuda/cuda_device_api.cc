@@ -9,9 +9,14 @@
 #include <tvm/runtime/registry.h>
 #include <cuda_runtime.h>
 #include "cuda_common.h"
+#include <string>
+#include <iostream>
+#include <sstream>
 
 namespace tvm {
 namespace runtime {
+
+size_t total_copied = 0;
 
 class CUDADeviceAPI final : public DeviceAPI {
  public:
@@ -112,7 +117,10 @@ class CUDADeviceAPI final : public DeviceAPI {
                       TVMContext ctx_to,
                       TVMType type_hint,
                       TVMStreamHandle stream) final {
-    cudaStream_t cu_stream = static_cast<cudaStream_t>(stream);
+    // std::cout << LOG_PREFIX() << "CopyDataFromTo entry" << std::endl;
+    cudaStream_t cu_stream = static_cast<cudaStream_t>(CUDAThreadEntry::ThreadLocal()->stream);
+    // // IGNORE passed in stream?
+    //cudaStream_t cu_stream = static_cast<cudaStream_t>(stream);
     from = static_cast<const char*>(from) + from_offset;
     to = static_cast<char*>(to) + to_offset;
     if (ctx_from.device_type == kDLGPU && ctx_to.device_type == kDLGPU) {
@@ -120,9 +128,9 @@ class CUDADeviceAPI final : public DeviceAPI {
       if (ctx_from.device_id == ctx_to.device_id) {
         GPUCopy(from, to, size, cudaMemcpyDeviceToDevice, cu_stream);
       } else {
-        cudaMemcpyPeerAsync(to, ctx_to.device_id,
+        CUDA_CALL(cudaMemcpyPeerAsync(to, ctx_to.device_id,
                             from, ctx_from.device_id,
-                            size, cu_stream);
+                            size, cu_stream));
       }
     } else if (ctx_from.device_type == kDLGPU && ctx_to.device_type == kDLCPU) {
       CUDA_CALL(cudaSetDevice(ctx_from.device_id));
@@ -133,6 +141,8 @@ class CUDADeviceAPI final : public DeviceAPI {
     } else {
       LOG(FATAL) << "expect copy from/to GPU or between GPU";
     }
+
+    // std::cout << LOG_PREFIX() << "CopyDataFromTo exit" << std::endl;
   }
 
   TVMStreamHandle CreateStream(TVMContext ctx) {
@@ -184,16 +194,21 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
  private:
+
   static void GPUCopy(const void* from,
                       void* to,
                       size_t size,
                       cudaMemcpyKind kind,
                       cudaStream_t stream) {
-    if (stream != 0) {
+    // if (stream != 0) {
+    // std::cout << LOG_PREFIX() << " copying " << size << " to " << stream << std::endl;
+      REGULAR_LOG("copying " << size << " to stream " << stream << " --- total " << (total_copied += size));
       CUDA_CALL(cudaMemcpyAsync(to, from, size, kind, stream));
-    } else {
-      CUDA_CALL(cudaMemcpy(to, from, size, kind));
-    }
+
+    // std::cout << LOG_PREFIX() << " FINISHED copying " << size << " to " << stream << std::endl;
+    // } else {
+    //   CUDA_CALL(cudaMemcpy(to, from, size, kind));
+    // }
   }
 };
 

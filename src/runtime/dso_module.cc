@@ -93,12 +93,14 @@ class DSOModuleNode final : public ModuleNode {
     CHECK(lib_handle_ != nullptr)
         << "Failed to load dynamic shared library " << name
         << " " << dlerror();
+    // std::cout << "Loaded dynamic shared library " << name << std::endl;
   }
   void* GetSymbol(const char* name) {
     return dlsym(lib_handle_, name);
   }
   void Unload() {
     dlclose(lib_handle_);
+    // std::cout << "Unload dynamic shared library " << std::endl;
   }
 #endif
 };

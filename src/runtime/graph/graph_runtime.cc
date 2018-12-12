@@ -14,9 +14,41 @@
 #include <numeric>
 #include <vector>
 #include <string>
+#include <chrono>
 
 namespace tvm {
 namespace runtime {
+
+inline std::string now() {
+  std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+  auto duration = now.time_since_epoch();
+
+  typedef std::chrono::duration<int, std::ratio_multiply<std::chrono::hours::period, std::ratio<8>
+  >::type> Days; /* UTC: +8:00 */
+
+  Days days = std::chrono::duration_cast<Days>(duration);
+      duration -= days;
+  auto hours = std::chrono::duration_cast<std::chrono::hours>(duration);
+      duration -= hours;
+  auto minutes = std::chrono::duration_cast<std::chrono::minutes>(duration);
+      duration -= minutes;
+  auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+      duration -= seconds;
+  auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+      duration -= milliseconds;
+  auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
+      duration -= microseconds;
+  auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration);
+
+  std::stringstream ss;
+  ss << hours.count() << ":"
+            << minutes.count() << ":"
+            << seconds.count() << "."
+            << milliseconds.count() << " "
+            << microseconds.count() << " "
+            << nanoseconds.count();
+  return ss.str();
+}
 
 /*!
  * \brief Run all the operations one by one.
@@ -150,6 +182,10 @@ void GraphRuntime::LoadParams(dmlc::Stream* strm) {
   size_t size = static_cast<size_t>(sz);
   CHECK(size == names.size())
       << "Invalid parameters file format";
+
+  NDArray* temps[size];
+  NDArray* copyto[size];
+
   for (size_t i = 0; i < size; ++i) {
     int in_idx = GetInputIndex(names[i]);
     CHECK_GE(in_idx, 0) << "Found param for non-existent input: " << names[i];
@@ -157,9 +193,14 @@ void GraphRuntime::LoadParams(dmlc::Stream* strm) {
     CHECK_LT(eid, data_entry_.size());
 
     // The data_entry is allocated on device, NDArray.load always load the array into CPU.
-    NDArray temp;
-    temp.Load(strm);
-    data_entry_[eid].CopyFrom(temp);
+    temps[i] = new NDArray();
+    temps[i]->Load(strm);
+    copyto[i] = &data_entry_[eid];
+  }
+
+  for (size_t i = 0; i < size; ++i) {
+    copyto[i]->CopyFrom(*temps[i]);
+    delete temps[i];
   }
 }
 
@@ -349,7 +390,8 @@ PackedFunc GraphRuntime::GetFunction(
       });
   } else if (name == "load_params") {
     return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
-        this->LoadParams(args[0].operator std::string());
+        const std::string s = args[0].operator std::string();
+        this->LoadParams(s);
       });
   } else {
     return PackedFunc();
