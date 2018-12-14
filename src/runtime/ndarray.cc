@@ -27,10 +27,15 @@ inline void VerifyDataType(DLDataType dtype) {
   CHECK_EQ(dtype.bits & (dtype.bits - 1), 0);
 }
 
-inline size_t GetDataAlignment(const DLTensor& arr) {
-  size_t align = (arr.dtype.bits / 8) * arr.dtype.lanes;
+
+inline size_t GetDataAlignment(DLDataType dtype) {
+  size_t align = (dtype.bits / 8) * dtype.lanes;
   if (align < kAllocAlignment) return kAllocAlignment;
   return align;
+}
+
+inline size_t GetDataAlignment(const DLTensor& arr) {
+  return GetDataAlignment(arr.dtype);
 }
 
 struct NDArray::Internal {
@@ -100,12 +105,17 @@ struct NDArray::Internal {
 
 NDArray NDArray::CreateView(std::vector<int64_t> shape,
                             DLDataType dtype) {
+  return this->CreateView(0, shape, dtype);
+}
+
+NDArray NDArray::CreateView(size_t byte_offset,
+                            std::vector<int64_t> shape,
+                            DLDataType dtype) {
   CHECK(data_ != nullptr);
   CHECK(data_->dl_tensor.strides == nullptr)
       << "Can only create view for compact tensor";
   NDArray ret = Internal::Create(shape, dtype, data_->dl_tensor.ctx);
-  ret.data_->dl_tensor.byte_offset =
-      this->data_->dl_tensor.byte_offset;
+  ret.data_->dl_tensor.byte_offset = this->data_->dl_tensor.byte_offset;
   size_t curr_size = GetDataSize(this->data_->dl_tensor);
   size_t view_size = GetDataSize(ret.data_->dl_tensor);
   CHECK_LE(view_size, curr_size)
@@ -113,7 +123,7 @@ NDArray NDArray::CreateView(std::vector<int64_t> shape,
   // increase ref count
   this->data_->IncRef();
   ret.data_->manager_ctx = this->data_;
-  ret.data_->dl_tensor.data = this->data_->dl_tensor.data;
+  ret.data_->dl_tensor.data = this->data_->dl_tensor.data + byte_offset; // done here because of tvm errors doing it in byte_offset
   return ret;
 }
 
@@ -132,6 +142,14 @@ NDArray NDArray::Empty(std::vector<int64_t> shape,
       DeviceAPI::Get(ret->ctx)->AllocDataSpace(
           ret->ctx, size, alignment, ret->dtype);
   return ret;
+}
+
+NDArray NDArray::Empty(int64_t length,
+                       DLDataType dtype,
+                       DLContext ctx) {
+  std::vector<int64_t> shape;
+  shape.push_back(length);
+  return NDArray::Empty(shape, dtype, ctx);
 }
 
 NDArray NDArray::FromDLPack(DLManagedTensor* tensor) {

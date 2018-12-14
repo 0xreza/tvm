@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <chrono>
+#include <unordered_map>
 
 namespace tvm {
 namespace runtime {
@@ -205,6 +206,11 @@ void GraphRuntime::LoadParams(dmlc::Stream* strm) {
 }
 
 void GraphRuntime::SetupStorage() {
+  // SetupStorage1();
+  SetupStorage2();
+}
+
+void GraphRuntime::SetupStorage1() {
   // Grab saved optimization plan from graph.
   std::vector<TVMType> vtype;
   for (const std::string& s_type : attrs_.dltype) {
@@ -243,6 +249,7 @@ void GraphRuntime::SetupStorage() {
     pool_entry[sid].device_type = device_type;
   }
 
+
   // Allocate the space.
   for (const auto& pit : pool_entry) {
     std::vector<int64_t> shape;
@@ -267,6 +274,118 @@ void GraphRuntime::SetupStorage() {
     CHECK_LT(static_cast<size_t>(storage_id), storage_pool_.size());
     data_entry_[i] =
         storage_pool_[storage_id].CreateView(attrs_.shape[i], vtype[i]);
+  }
+}
+
+void GraphRuntime::SetupStorage2() {
+  typedef struct data_entry_spec{
+    unsigned id;
+    std::vector<int64_t> shape;
+    TVMType dtype;
+    size_t size;
+    int storage_id;
+    int device_type;
+    bool is_input;
+    TVMContext ctx;
+  } data_entry_spec;
+
+  std::vector<data_entry_spec> ds(attrs_.shape.size());
+
+  for (unsigned i = 0; i < ds.size(); i++) {
+    data_entry_spec &d = ds[i];
+    d.id = i;
+    d.shape = this->attrs_.shape[i];
+    d.dtype = tvm::runtime::String2TVMType(attrs_.dltype[i]);
+    d.size = GetDataSize(d.shape, d.dtype);
+    d.storage_id = attrs_.storage_id[i];
+    d.device_type = this->attrs_.device_index.empty() ? static_cast<int>(this->ctxs_[0].device_type) : this->attrs_.device_index[i];
+    d.is_input = false;
+
+
+    const auto& cit =
+        std::find_if(ctxs_.begin(), ctxs_.end(), [&d](const TVMContext& c) {
+          return d.device_type == static_cast<int>(c.device_type);
+        });
+    d.ctx = cit == ctxs_.end() ? ctxs_[0] : *cit;
+  }
+
+  for (uint32_t input_node_id : this->input_nodes_) {
+    ds[input_node_id].is_input = true;
+  }
+
+  typedef struct storage_spec {
+    storage_spec() : is_input(false), size(0) {}
+    int storage_id;
+    std::vector<data_entry_spec> data_entries;
+    bool is_input;
+    size_t size;
+    int device_type;
+    TVMContext ctx;
+  } storage_spec;
+
+  std::unordered_map<int, storage_spec> specs;
+
+  for (data_entry_spec &d : ds) {
+    if (specs.find(d.storage_id) != specs.end()) {
+      int device_type = specs[d.storage_id].device_type;
+      CHECK(device_type == -1 || device_type == d.device_type) << "The same pool entry cannot be assigned to multiple devices";      
+    }
+
+    storage_spec &s = specs[d.storage_id];
+    s.storage_id = d.storage_id;
+    s.data_entries.push_back(d);
+    s.is_input |= d.is_input;
+    s.size = std::max(s.size, d.size);
+    s.device_type = d.device_type;
+    s.ctx = d.ctx;
+  }
+
+
+  // Divide into contiguous GPU storage and the rest (TODO: generalize to any ctxs)
+  std::vector<storage_spec> gpu_contiguous_storage;
+  std::vector<storage_spec> regular_storage;
+  for (const auto &e : specs) {
+    const storage_spec &s = e.second;
+    if (s.is_input && s.device_type == kDLGPU) gpu_contiguous_storage.push_back(s);
+    else regular_storage.push_back(s);
+  }
+
+  // Set up the storage pool
+  storage_pool_.resize(specs.size());
+
+  // Allocate the GPU contiguous storage
+  contiguous_memory_allocation &contiguous = this->contiguous_input_memory;
+  for (storage_spec &s : gpu_contiguous_storage) {
+    contiguous.storage_ids.push_back(s.storage_id);
+    contiguous.offsets.push_back(contiguous.size * 4);
+    contiguous.size += (s.size + 3) / 4;
+  }
+  contiguous.ctx = gpu_contiguous_storage[0].ctx;
+  contiguous.backing_array = NDArray::Empty(contiguous.size, DLDataType{kDLFloat, 32, 1}, contiguous.ctx);
+
+  // Create views onto the contiguous storage
+  for (unsigned i = 0; i < gpu_contiguous_storage.size(); i++) {
+    storage_spec &s = gpu_contiguous_storage[i];
+    std::vector<int64_t> shape;
+    shape.push_back(static_cast<int64_t>((s.size + 3) / 4));
+    size_t byte_offset = static_cast<size_t>(contiguous.offsets[i]);
+    storage_pool_[s.storage_id] = contiguous.backing_array.CreateView(byte_offset, shape, DLDataType{kDLFloat, 32, 1});
+    // storage_pool_[s.storage_id] = NDArray::Empty(shape, DLDataType{kDLFloat, 32, 1}, s.ctx);
+  }
+
+  // Allocate regular storage
+  for (storage_spec &s : regular_storage) {
+    std::vector<int64_t> shape;
+    shape.push_back(static_cast<int64_t>((s.size + 3) / 4));
+    storage_pool_[s.storage_id] = NDArray::Empty(shape, DLDataType{kDLFloat, 32, 1}, s.ctx);
+  }
+
+  // Assign the pooled entries. A unified memory pool is used to simplifiy
+  // memory assignment for each node entry. The allocated memory on each device
+  // is mapped to this pool.
+  data_entry_.resize(ds.size());
+  for (data_entry_spec &d : ds) {
+    data_entry_[d.id] = storage_pool_[d.storage_id].CreateView(d.shape, d.dtype);
   }
 }
 

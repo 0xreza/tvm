@@ -135,6 +135,15 @@ class NDArray {
   TVM_DLL NDArray CreateView(
       std::vector<int64_t> shape, DLDataType dtype);
   /*!
+   * \brief Create a NDArray that shares the data memory with the current one.
+   * \param offset The offset into the data to create a view of
+   * \param shape The shape of the new array.
+   * \param dtype The data type of the new array.
+   * \note The memory size of new array must be smaller than the current one.
+   */
+  TVM_DLL NDArray CreateView(
+      size_t byte_offset, std::vector<int64_t> shape, DLDataType dtype);
+  /*!
    * \brief Create a reference view of NDArray that
    *  represents as DLManagedTensor.
    * \return A DLManagedTensor
@@ -150,6 +159,19 @@ class NDArray {
   TVM_DLL static NDArray Empty(std::vector<int64_t> shape,
                                DLDataType dtype,
                                DLContext ctx);
+  /*!
+   * \brief Create an empty 1-dimentional NDArray.
+   * \param length The length of the array
+   * \param dtype The data type of the new array.
+   * \param ctx The context of the Array.
+   * \return The created Array
+   */
+  TVM_DLL static NDArray Empty(int64_t length,
+                               DLDataType dtype,
+                               DLContext ctx);
+
+
+
   /*!
    * \brief Create a NDArray backed by a dlpack tensor.
    *
@@ -282,6 +304,15 @@ inline void NDArray::reset() {
   }
 }
 
+inline size_t GetDataSize(int ndim, int64_t* shape, DLDataType dtype) {
+  size_t size = 1;
+  for (tvm_index_t i = 0; i < ndim; ++i) {
+    size *= static_cast<size_t>(shape[i]);
+  }
+  size *= (dtype.bits * dtype.lanes + 7) / 8;
+  return size;
+}
+
 /*! \brief return the size of data the DLTensor hold, in term of number of bytes
  *
  *  \param arr the input DLTensor
@@ -289,12 +320,11 @@ inline void NDArray::reset() {
  *  \return number of  bytes of data in the DLTensor.
  */
 inline size_t GetDataSize(const DLTensor& arr) {
-  size_t size = 1;
-  for (tvm_index_t i = 0; i < arr.ndim; ++i) {
-    size *= static_cast<size_t>(arr.shape[i]);
-  }
-  size *= (arr.dtype.bits * arr.dtype.lanes + 7) / 8;
-  return size;
+  return GetDataSize(arr.ndim, arr.shape, arr.dtype);
+}
+
+inline size_t GetDataSize(std::vector<int64_t> shape, DLDataType dtype) {
+  return GetDataSize(shape.size(), dmlc::BeginPtr(shape), dtype);
 }
 
 inline void NDArray::CopyFrom(DLTensor* other) {

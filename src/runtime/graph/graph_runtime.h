@@ -357,8 +357,11 @@ class GraphRuntime : public ModuleNode {
   }
   /*! \brief Setup the temporal storage */
   void SetupStorage();
+  void SetupStorage1();
+  void SetupStorage2();
   /*! \brief Setup the executors. */
   void SetupOpExecs();
+
   /*!
    * \brief Create a executtion function given input.
    * \param attrs The node attributes.
@@ -402,6 +405,18 @@ class GraphRuntime : public ModuleNode {
   std::vector<NDArray> data_entry_;
   /*! \brief Operator on each node. */
   std::vector<std::function<void()> > op_execs_;
+
+  typedef struct contiguous_memory_allocation {
+    contiguous_memory_allocation() : size(0) {}
+    uint64_t size;
+    std::vector<uint32_t> storage_ids;
+    std::vector<uint32_t> offsets;
+    NDArray backing_array;
+    TVMContext ctx;
+  } contiguous_memory_allocation;
+
+  /*! \brief Allocate input memory as a single contiguous region to enable fast copy. */
+  contiguous_memory_allocation contiguous_input_memory;
 };
 
 std::vector<TVMContext> GetAllContext(const TVMArgs& args);
