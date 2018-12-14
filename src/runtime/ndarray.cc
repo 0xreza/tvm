@@ -152,6 +152,11 @@ NDArray NDArray::Empty(int64_t length,
   return NDArray::Empty(shape, dtype, ctx);
 }
 
+
+uint64_t NDArray::Size() {
+  return static_cast<uint64_t>(GetDataSize(this->data_->dl_tensor));  
+}
+
 NDArray NDArray::FromDLPack(DLManagedTensor* tensor) {
   NDArray::Container* data = new NDArray::Container();
   data->deleter = Internal::DLPackDeleter;
