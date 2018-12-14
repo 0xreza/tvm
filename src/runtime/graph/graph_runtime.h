@@ -84,7 +84,8 @@ class GraphRuntime : public ModuleNode {
 
   void Init(const std::string& graph_json,
             tvm::runtime::Module module,
-            const std::vector<TVMContext>& ctxs);
+            const std::vector<TVMContext>& ctxs,
+            bool contiguous);
 
   /*!
    * \brief Get the input index given the name of input.
@@ -356,11 +357,13 @@ class GraphRuntime : public ModuleNode {
       CHECK_EQ(bitmask, 1|2|4|8|16) << "invalid format";
   }
   /*! \brief Setup the temporal storage */
-  void SetupStorage();
-  void SetupStorage1();
-  void SetupStorage2();
+  void SetupStorage();;
+  void SetupStorageContiguous();
   /*! \brief Setup the executors. */
   void SetupOpExecs();
+
+  NDArray GetConstParams();
+  void SetConstParams(NDArray params);
 
   /*!
    * \brief Create a executtion function given input.

@@ -70,7 +70,8 @@ void GraphRuntime::Run() {
  */
 void GraphRuntime::Init(const std::string& graph_json,
                         tvm::runtime::Module module,
-                        const std::vector<TVMContext>& ctxs) {
+                        const std::vector<TVMContext>& ctxs,
+                        bool contiguous) {
 #ifndef _LIBCPP_SGX_NO_IOSTREAMS
   std::istringstream is(graph_json);
 #else
@@ -80,7 +81,8 @@ void GraphRuntime::Init(const std::string& graph_json,
   this->Load(&reader);
   module_ = module;
   ctxs_ = ctxs;
-  this->SetupStorage();
+  if (contiguous) this->SetupStorageContiguous();
+  else this->SetupStorage();
   this->SetupOpExecs();
 }
 /*!
@@ -205,12 +207,16 @@ void GraphRuntime::LoadParams(dmlc::Stream* strm) {
   }
 }
 
-void GraphRuntime::SetupStorage() {
-  // SetupStorage1();
-  SetupStorage2();
+NDArray GraphRuntime::GetConstParams() {
+  NDArray gpu_contiguous = this->contiguous_input_memory.backing_array;
+  return gpu_contiguous.CopyTo({kDLCPU, 0});
 }
 
-void GraphRuntime::SetupStorage1() {
+void GraphRuntime::SetConstParams(NDArray params) {
+  params.CopyTo(this->contiguous_input_memory.backing_array);
+}
+
+void GraphRuntime::SetupStorage() {
   // Grab saved optimization plan from graph.
   std::vector<TVMType> vtype;
   for (const std::string& s_type : attrs_.dltype) {
@@ -277,7 +283,7 @@ void GraphRuntime::SetupStorage1() {
   }
 }
 
-void GraphRuntime::SetupStorage2() {
+void GraphRuntime::SetupStorageContiguous() {
   typedef struct data_entry_spec{
     unsigned id;
     std::vector<int64_t> shape;
@@ -512,6 +518,14 @@ PackedFunc GraphRuntime::GetFunction(
         const std::string s = args[0].operator std::string();
         this->LoadParams(s);
       });
+  } else if (name == "get_const_params") {
+    return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
+        *rv = this->GetConstParams();
+      });
+  } else if (name == "set_const_params") {
+    return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
+        this->SetConstParams(args[0]);
+      });
   } else {
     return PackedFunc();
   }
@@ -519,9 +533,10 @@ PackedFunc GraphRuntime::GetFunction(
 
 Module GraphRuntimeCreate(const std::string& sym_json,
                           const tvm::runtime::Module& m,
-                          const std::vector<TVMContext>& ctxs) {
+                          const std::vector<TVMContext>& ctxs,
+                          const bool contiguous) {
   std::shared_ptr<GraphRuntime> exec = std::make_shared<GraphRuntime>();
-  exec->Init(sym_json, m, ctxs);
+  exec->Init(sym_json, m, ctxs, contiguous);
   return Module(exec);
 }
 
@@ -551,7 +566,17 @@ TVM_REGISTER_GLOBAL("tvm.graph_runtime.create")
            "at least 4, but it has "
         << args.num_args;
     const auto& contexts = GetAllContext(args);
-    *rv = GraphRuntimeCreate(args[0], args[1], contexts);
+    *rv = GraphRuntimeCreate(args[0], args[1], contexts, false);
+  });
+
+TVM_REGISTER_GLOBAL("tvm.graph_runtime.create_contiguous")
+  .set_body([](TVMArgs args, TVMRetValue* rv) {
+    CHECK_GE(args.num_args, 4)
+        << "The expected number of arguments for graph_runtime.create is "
+           "at least 4, but it has "
+        << args.num_args;
+    const auto& contexts = GetAllContext(args);
+    *rv = GraphRuntimeCreate(args[0], args[1], contexts, true);
   });
 
 TVM_REGISTER_GLOBAL("tvm.graph_runtime.remote_create")
@@ -563,7 +588,7 @@ TVM_REGISTER_GLOBAL("tvm.graph_runtime.remote_create")
     void* mhandle = args[1];
     const auto& contexts = GetAllContext(args);
     *rv = GraphRuntimeCreate(
-        args[0], *static_cast<tvm::runtime::Module*>(mhandle), contexts);
+        args[0], *static_cast<tvm::runtime::Module*>(mhandle), contexts, false);
   });
 }  // namespace runtime
 }  // namespace tvm
