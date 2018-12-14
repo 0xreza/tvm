@@ -24,7 +24,7 @@ class WorkspacePool::Pool {
   }
   // allocate from pool
   void* Alloc(TVMContext ctx, DeviceAPI* device, size_t nbytes) {
-    std::cout << "WorkspacePool Alloc " << nbytes << std::endl;
+    // std::cout << "WorkspacePool Alloc " << nbytes << std::endl;
     // Allocate align to page.
     nbytes = (nbytes + (kWorkspacePageSize - 1)) / kWorkspacePageSize * kWorkspacePageSize;
     if (nbytes == 0) nbytes = kWorkspacePageSize;

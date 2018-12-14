@@ -99,7 +99,7 @@ class CUDADeviceAPI final : public DeviceAPI {
     CHECK_EQ(256 % alignment, 0U)
         << "CUDA space is aligned at 256 bytes";
     void *ret;
-    std::cout << "cudaMalloc " << nbytes << std::endl;
+    // std::cout << LOG_PREFIX() << "cudaMalloc " << nbytes << std::endl;
     CUDA_CALL(cudaMalloc(&ret, nbytes));
     return ret;
   }
@@ -118,7 +118,7 @@ class CUDADeviceAPI final : public DeviceAPI {
                       TVMContext ctx_to,
                       TVMType type_hint,
                       TVMStreamHandle stream) final {
-    std::cout << LOG_PREFIX() << "CopyDataFromTo " << size << std::endl;
+    // std::cout << LOG_PREFIX() << "CopyDataFromTo " << size << std::endl;
     cudaStream_t cu_stream = static_cast<cudaStream_t>(CUDAThreadEntry::ThreadLocal()->stream);
     // // IGNORE passed in stream?
     //cudaStream_t cu_stream = static_cast<cudaStream_t>(stream);
@@ -181,7 +181,7 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
   void* AllocWorkspace(TVMContext ctx, size_t size, TVMType type_hint) final {
-    std::cout << "Allocworkspace " << size << std::endl;
+    // std::cout << "Allocworkspace " << size << std::endl;
     return CUDAThreadEntry::ThreadLocal()->pool.AllocWorkspace(ctx, size);
   }
 
