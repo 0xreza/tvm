@@ -201,10 +201,14 @@ void GraphRuntime::LoadParams(dmlc::Stream* strm) {
     copyto[i] = &data_entry_[eid];
   }
 
+  auto load_start = std::chrono::high_resolution_clock::now();
   for (size_t i = 0; i < size; ++i) {
     copyto[i]->CopyFrom(*temps[i]);
     delete temps[i];
   }
+  auto load_end = std::chrono::high_resolution_clock::now();
+  auto  load_dur = std::chrono::duration_cast<std::chrono::nanoseconds>(load_end - load_start);
+  std::cout << "Uploading took " << load_dur.count() << " nanoseconds\n";
 }
 
 NDArray GraphRuntime::GetConstParams() {
@@ -334,7 +338,7 @@ void GraphRuntime::SetupStorageContiguous() {
   for (data_entry_spec &d : ds) {
     if (specs.find(d.storage_id) != specs.end()) {
       int device_type = specs[d.storage_id].device_type;
-      CHECK(device_type == -1 || device_type == d.device_type) << "The same pool entry cannot be assigned to multiple devices";      
+      CHECK(device_type == -1 || device_type == d.device_type) << "The same pool entry cannot be assigned to multiple devices";
     }
 
     storage_spec &s = specs[d.storage_id];

@@ -10,6 +10,7 @@
 #include <tvm/runtime/module.h>
 #include <tvm/runtime/registry.h>
 #include <tvm/runtime/device_api.h>
+#include <cstring>
 #ifdef _LIBCPP_SGX_CONFIG
 #include "sgx/trusted/runtime.h"
 #endif
@@ -21,6 +22,40 @@
 
 namespace tvm {
 namespace runtime {
+
+  inline std::string now() {
+    std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+
+    typedef std::chrono::duration<int, std::ratio_multiply<std::chrono::hours::period, std::ratio<8>
+    >::type> Days; /* UTC: +8:00 */
+
+    Days days = std::chrono::duration_cast<Days>(duration);
+        duration -= days;
+    auto hours = std::chrono::duration_cast<std::chrono::hours>(duration);
+        duration -= hours;
+    auto minutes = std::chrono::duration_cast<std::chrono::minutes>(duration);
+        duration -= minutes;
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+        duration -= seconds;
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
+        duration -= milliseconds;
+    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(duration);
+        duration -= microseconds;
+    auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration);
+
+    std::stringstream ss;
+    ss << hours.count() << ":"
+              << minutes.count() << ":"
+              << seconds.count() << "."
+              << milliseconds.count() << " "
+              << microseconds.count() << " "
+              << nanoseconds.count();
+    return ss.str();
+  }
+
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+#define LOG_PREFIX() now() << " " << __FILENAME__ << ":" << __LINE__ << " \t"
 
 class DeviceAPIManager {
  public:
@@ -122,11 +157,13 @@ const char *TVMGetLastError() {
 }
 
 void TVMAPISetLastError(const char* msg) {
+  std::cout << "FUNC_ENTER TVMAPISetLastError" << std::endl;
 #ifndef _LIBCPP_SGX_CONFIG
   TVMAPIRuntimeStore::Get()->last_error = msg;
 #else
   sgx::OCallPackedFunc("__sgx_set_last_error__", msg);
 #endif
+std::cout << "FUNC_EXIT TVMAPISetLastError" << std::endl;
 }
 
 int TVMModLoadFromFile(const char* file_name,
@@ -170,9 +207,12 @@ int TVMModFree(TVMModuleHandle mod) {
 int TVMBackendGetFuncFromEnv(void* mod_node,
                              const char* func_name,
                              TVMFunctionHandle *func) {
+  std::cout << "FUNC_ENTER TVMBackendGetFuncFromEnv" << std::endl;
   API_BEGIN();
   *func = (TVMFunctionHandle)(
       static_cast<ModuleNode*>(mod_node)->GetFuncFromEnv(func_name));
+  std::cout << "\t" << LOG_PREFIX() << "RSC USAGE: LIB GET_FUNC " << func_name << " " << *func << std::endl;
+  std::cout << "FUNC_EXIT TVMBackendGetFuncFromEnv" << std::endl;
   API_END();
 }
 
@@ -181,6 +221,7 @@ void* TVMBackendAllocWorkspace(int device_type,
                                uint64_t size,
                                int dtype_code_hint,
                                int dtype_bits_hint) {
+  std::cout << "FUNC_ENTER TVMBackendAllocWorkspace" << std::endl;
   TVMContext ctx;
   ctx.device_type = static_cast<DLDeviceType>(device_type);
   ctx.device_id = device_id;
@@ -189,7 +230,7 @@ void* TVMBackendAllocWorkspace(int device_type,
   type_hint.code = static_cast<decltype(type_hint.code)>(dtype_code_hint);
   type_hint.bits = static_cast<decltype(type_hint.bits)>(dtype_bits_hint);
   type_hint.lanes = 1;
-
+  std::cout << "FUNC_EXIT TVMBackendAllocWorkspace" << std::endl;
   return DeviceAPIManager::Get(ctx)->AllocWorkspace(ctx,
                                                     static_cast<size_t>(size),
                                                     type_hint);
@@ -198,10 +239,12 @@ void* TVMBackendAllocWorkspace(int device_type,
 int TVMBackendFreeWorkspace(int device_type,
                             int device_id,
                             void* ptr) {
+  std::cout << "FUNC_ENTER TVMBackendFreeWorkspace" << std::endl;
   TVMContext ctx;
   ctx.device_type = static_cast<DLDeviceType>(device_type);
   ctx.device_id = device_id;
   DeviceAPIManager::Get(ctx)->FreeWorkspace(ctx, ptr);
+  std::cout << "FUNC_EXIT TVMBackendFreeWorkspace" << std::endl;
   return 0;
 }
 
@@ -229,9 +272,12 @@ int TVMFuncCall(TVMFunctionHandle func,
                 TVMValue* ret_val,
                 int* ret_type_code) {
   API_BEGIN();
+  std::cout << "FUNC_ENTER TVMFuncCall" << std::endl;
+  std::cout << "\t" << LOG_PREFIX() << "RSC USAGE: LIB FUNC_CALL " << func << std::endl;
   TVMRetValue rv;
   (*static_cast<const PackedFunc*>(func)).CallPacked(
       TVMArgs(args, arg_type_codes, num_args), &rv);
+  std::cout << "DYNAMIC_FUNC_EXIT" << std::endl;
   // handle return string.
   if (rv.type_code() == kStr ||
      rv.type_code() == kTVMType ||
@@ -254,6 +300,7 @@ int TVMFuncCall(TVMFunctionHandle func,
   } else {
     rv.MoveToCHost(ret_val, ret_type_code);
   }
+  std::cout << "FUNC_EXIT TVMFuncCall" << std::endl;
   API_END();
 }
 

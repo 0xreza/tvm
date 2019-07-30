@@ -70,9 +70,9 @@ call(Fun&& f, Args&&... args) {
     return std::forward<Fun>(f)(std::forward<Args>(args)...);
 }
 
-#define LOG_PREFIX() now() << " " << __FILENAME__ << ":" << __LINE__ << " \t" 
+#define LOG_PREFIX() now() << " " << __FILENAME__ << ":" << __LINE__ << " \t"
 
-// #define LOGGINGENABLED 
+// #define LOGGINGENABLED
 
 #ifdef LOGGINGENABLED
 
@@ -93,7 +93,7 @@ call(Fun&& f, Args&&... args) {
     #define CUDA_LOG(f) \
       std::cout << now() << "  " << __FILENAME__ << ":" << __LINE__ << " \t" << #f << std::endl; \
       f \
-      
+
 
     #define CUDA_CALL(func)                                            \
       {                                                           \
@@ -102,7 +102,7 @@ call(Fun&& f, Args&&... args) {
         CHECK(e == cudaSuccess || e == cudaErrorCudartUnloading)       \
             << "CUDA: " << cudaGetErrorString(e);                      \
       }
-      
+
 
     #define CUDA_CALLM(func, ...)                                            \
       {                                                                \
@@ -128,7 +128,7 @@ call(Fun&& f, Args&&... args) {
       }
 
     #define CUDA_LOG(f) f
-      
+
 
     #define CUDA_CALL(func)                                            \
       {                                                           \
@@ -136,7 +136,7 @@ call(Fun&& f, Args&&... args) {
         CHECK(e == cudaSuccess || e == cudaErrorCudartUnloading)       \
             << "CUDA: " << cudaGetErrorString(e);                      \
       }
-      
+
 
     #define CUDA_CALLM(func, ...)                                            \
       {                                                                \

@@ -154,7 +154,7 @@ NDArray NDArray::Empty(int64_t length,
 
 
 uint64_t NDArray::Size() {
-  return static_cast<uint64_t>(GetDataSize(this->data_->dl_tensor));  
+  return static_cast<uint64_t>(GetDataSize(this->data_->dl_tensor));
 }
 
 NDArray NDArray::FromDLPack(DLManagedTensor* tensor) {
