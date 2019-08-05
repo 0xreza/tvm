@@ -358,15 +358,15 @@ int TVMBackendParallelLaunch(
     FTVMParallelLambda flambda,
     void* cdata,
     int num_task) {
-  std::cout << "FUNC_ENTER TVMBackendParallelLaunch" << std::endl;
+  // std::cout << "FUNC_ENTER TVMBackendParallelLaunch" << std::endl;
   int res = tvm::runtime::ThreadPool::ThreadLocal()->Launch(
       flambda, cdata, num_task, 1);
-  std::cout << "FUNC_EXIT TVMBackendParallelLaunch" << std::endl;
+  // std::cout << "FUNC_EXIT TVMBackendParallelLaunch" << std::endl;
   return res;
 }
 
 int TVMBackendParallelBarrier(int task_id, TVMParallelGroupEnv* penv) {
-  std::cout << "FUNC_ENTER TVMBackendParallelBarrier" << std::endl;
+  // std::cout << "FUNC_ENTER TVMBackendParallelBarrier" << std::endl;
   using tvm::runtime::kSyncStride;
   int num_task = penv->num_task;
   std::atomic<int>* sync_counter =
@@ -382,6 +382,6 @@ int TVMBackendParallelBarrier(int task_id, TVMParallelGroupEnv* penv) {
     }
   }
   std::atomic_thread_fence(std::memory_order_acquire);
-  std::cout << "FUNC_EXIT TVMBackendParallelBarrier" << std::endl;
+  // std::cout << "FUNC_EXIT TVMBackendParallelBarrier" << std::endl;
   return 0;
 }

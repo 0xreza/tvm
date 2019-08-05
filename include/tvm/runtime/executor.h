@@ -15,6 +15,19 @@
 namespace tvm {
 namespace runtime {
 
+  static std::mutex outLock;
+
+  inline long now_in_ms() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+  }
+
+
+  #define LOCKED_LOG(x) {                                                      \
+    outLock.lock();                                                            \
+    std::cout << x << " " << now_in_ms() << std::endl;                         \
+    outLock.unlock();                                                          \
+  }
+
   typedef struct Task {
     std::atomic<bool> done; // has the op completed
     std::atomic<bool> nextHasCecked; // has the next op in pipeline checked for completion

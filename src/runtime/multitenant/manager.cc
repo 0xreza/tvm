@@ -3,6 +3,7 @@
 #include <tvm/runtime/manager.h>
 #include <tvm/runtime/registry.h>
 #include <tvm/runtime/packed_func.h>
+#include <chrono>
 
 #include "util/shmem.h"
 
@@ -18,6 +19,7 @@ namespace runtime {
     // assign a single task of loading the model from disk, which takes quite a
     // while to load up, then have it trigger enqueueing of all tasks for infer
     Task loadAndEnqueue([=, &callback] {
+      LOCKED_LOG("TASK disk_load");
       const PackedFunc load_module(*tvm::runtime::Registry::Get("module.loadfile_so"));
 
       // Graph structure
@@ -37,6 +39,7 @@ namespace runtime {
       this->execLock_.lock();
 
       Task createModel([=]{
+        LOCKED_LOG("TASK cpu");
         TVMByteArray params_arr;
         params_arr.data = params_data->c_str();
         params_arr.size = params_data->length();
@@ -53,6 +56,7 @@ namespace runtime {
 
       Task* prev = this->cpu_.addTask(createModel);
       Task copyToDevice([=] {
+        LOCKED_LOG("TASK load_to_device");
         this->modelLock_.lock();
         PackedFunc load = this->models_[name].GetFunction("load_to_device");
         this->modelLock_.unlock();
@@ -62,6 +66,7 @@ namespace runtime {
 
       prev = this->load_to_device_.addTask(copyToDevice);
       Task uploadInput([=] {
+        LOCKED_LOG("TASK input");
         this->modelLock_.lock();
         PackedFunc set_input = this->models_[name].GetFunction("set_input");
         this->modelLock_.unlock();
@@ -71,6 +76,7 @@ namespace runtime {
 
       prev = this->upload_inputs_.addTask(uploadInput);
       Task run([=] {
+        LOCKED_LOG("TASK run");
         this->modelLock_.lock();
         PackedFunc run = this->models_[name].GetFunction("run");
         this->modelLock_.unlock();
@@ -80,6 +86,7 @@ namespace runtime {
 
       prev = this->gpu_.addTask(run);
       Task getOutput([=, &callback] {
+        LOCKED_LOG("TASK output");
         this->modelLock_.lock();
         PackedFunc get_output = this->models_[name].GetFunction("get_output");
         this->modelLock_.unlock();
@@ -106,18 +113,21 @@ namespace runtime {
     this->execLock_.lock();
 
     Task uploadInput([=, &model] {
+      LOCKED_LOG("TASK input");
       PackedFunc set_input = model.GetFunction("set_input");
       set_input(inputName, input);
     });
 
     Task* prev = upload_inputs_.addTask(uploadInput);
     Task run([=, &model] {
+      LOCKED_LOG("TASK run");
       PackedFunc run = model.GetFunction("run");
       run();
     }, prev);
 
     prev = gpu_.addTask(run);
     Task getOutput([=, &model, &callback] {
+      LOCKED_LOG("TASK output");
       PackedFunc get_output = model.GetFunction("get_output");
       get_output(outIndex, output);
       std::thread(callback).detach();

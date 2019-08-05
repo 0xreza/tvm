@@ -5,6 +5,7 @@
 
  #include <tvm/runtime/executor.h>
  #include "../cuda/cuda_common.h"
+ #include <chrono>
 
  namespace tvm {
  namespace runtime {
@@ -42,6 +43,8 @@
        if (syncAfterOp_) {
          CUDA_CALL(cudaStreamSynchronize(CUDAThreadEntry::ThreadLocal()->stream));
        }
+
+       LOCKED_LOG("TASK_END");
 
        // mark this task as complete
        t.done.store(true);

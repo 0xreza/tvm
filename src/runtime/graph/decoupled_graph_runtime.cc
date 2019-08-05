@@ -51,6 +51,9 @@ inline std::string now() {
   return ss.str();
 }
 
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+#define LOG_PREFIX() now() << " " << __FILENAME__ << ":" << __LINE__ << " \t"
+
 /*!
  * \brief Run all the operations one by one.
  */
@@ -236,7 +239,7 @@ void DecoupledGraphRuntime::UploadParams() {
   }
   auto load_end = std::chrono::high_resolution_clock::now();
   auto  load_dur = std::chrono::duration_cast<std::chrono::nanoseconds>(load_end - load_start);
-  std::cout << "Uploading took " << load_dur.count() << " nanoseconds\n";
+  // std::cout << "Uploading took " << load_dur.count() << " nanoseconds\n";
 }
 
 /*!
@@ -517,7 +520,9 @@ std::function<void()> DecoupledGraphRuntime::CreateTVMOp(
   } else if (param.func_name == "__copy") {
     // Perform cross device data copy.
     // Directly copy data from the input to the output.
-    auto fexec = [arg_ptr]() {
+    auto& name = param.func_name;
+    auto fexec = [arg_ptr, name]() {
+      // std::cout << "\t" << LOG_PREFIX() << "RSC USAGE: LIB NAMED_FUNC_CALL " << name << std::endl;
       DLTensor* from = static_cast<DLTensor*>(arg_ptr->arg_values[0].v_handle);
       DLTensor* to = static_cast<DLTensor*>(arg_ptr->arg_values[1].v_handle);
       TVM_CCALL(TVMArrayCopyFromTo(from, to, nullptr));
@@ -529,13 +534,15 @@ std::function<void()> DecoupledGraphRuntime::CreateTVMOp(
   // code.
   tvm::runtime::PackedFunc pf = module_.GetFunction(param.func_name, false);
   CHECK(pf != nullptr) << "no such function in module: " << param.func_name;
-
-  auto fexec = [arg_ptr, pf]() {
+  auto& name = param.func_name;
+  auto fexec = [arg_ptr, pf, name]() {
+    // std::cout << "\t" << LOG_PREFIX() << "RSC USAGE: LIB NAMED_FUNC_CALL " << name << std::endl;
     TVMRetValue rv;
     TVMArgs targs(arg_ptr->arg_values.data(),
                   arg_ptr->arg_tcodes.data(),
                   static_cast<int>(arg_ptr->arg_values.size()));
     pf.CallPacked(targs, &rv);
+    // std::cout << "DYNAMIC_FUNC_EXIT" << std::endl;
   };
   return fexec;
 }
@@ -563,28 +570,28 @@ PackedFunc DecoupledGraphRuntime::GetFunction(
   // Return member functions during query.
   if (name == "set_input") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         if (args[0].type_code() == kStr) {
           int in_idx = this->GetInputIndex(args[0]);
           if (in_idx >= 0) this->SetInput(in_idx, args[1]);
         } else {
           this->SetInput(args[0], args[1]);
         }
-      std::cout << "FUNC_EXIT " << name << std::endl;
+      // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "get_output") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         if (args.num_args == 2) {
           this->CopyOutputTo(args[0], args[1]);
         } else {
           *rv = this->GetOutput(args[0]);
         }
-      std::cout << "FUNC_EXIT " << name << std::endl;
+      // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "get_input") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         int in_idx = 0;
         if (args[0].type_code() == kStr) {
           in_idx = this->GetInputIndex(args[0]);
@@ -593,58 +600,58 @@ PackedFunc DecoupledGraphRuntime::GetFunction(
         }
         CHECK_GE(in_idx, 0);
         *rv = this->GetInput(in_idx);
-      std::cout << "FUNC_EXIT " << name << std::endl;
+      // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "get_num_outputs") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         *rv = this->NumOutputs();
-      std::cout << "FUNC_EXIT " << name << std::endl;
+      // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "run") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         this->Run();
-      std::cout << "FUNC_EXIT " << name << std::endl;
+      // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "load_params") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         const std::string s = args[0].operator std::string();
         this->LoadParams(s);
-        std::cout << "FUNC_EXIT " << name << std::endl;
+        // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "load_params_contig") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         //const std::string s = args[0].operator std::string();
-        //std::cout << "length in packed func: " << s.length() << std::endl;
+        //// std::cout << "length in packed func: " << s.length() << std::endl;
         this->LoadParamsContiguously(args[0]);
-        std::cout << "FUNC_EXIT " << name << std::endl;
+        // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "get_const_params") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         *rv = this->GetConstParams();
-        std::cout << "FUNC_EXIT " << name << std::endl;
+        // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "set_const_params") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         this->SetConstParams(args[0]);
-        std::cout << "FUNC_EXIT " << name << std::endl;
+        // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "load_to_device") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         this->LoadToDevice();
-        std::cout << "FUNC_EXIT " << name << std::endl;
+        // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "save_params") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
-      std::cout << "FUNC_ENTER " << name << std::endl;
+      // std::cout << "FUNC_ENTER " << name << std::endl;
         *rv = this->SaveParams();
-        std::cout << "FUNC_EXIT " << name << std::endl;
+        // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else {
     return PackedFunc();
@@ -681,26 +688,26 @@ Module DecoupledGraphRuntimeCreate(const std::string& sym_json,
 // Eventually, we will only probably pass TVMContext for all the languages.
 TVM_REGISTER_GLOBAL("tvm.decoupled_graph_runtime.create")
   .set_body([](TVMArgs args, TVMRetValue* rv) {
-    std::cout << "FUNC_ENTER CREATE RUNTIME" << std::endl;
+    // std::cout << "FUNC_ENTER CREATE RUNTIME" << std::endl;
     CHECK_GE(args.num_args, 4)
         << "The expected number of arguments for graph_runtime.create is "
            "at least 4, but it has "
         << args.num_args;
     const auto& contexts = GetAllContext(args);
     *rv = DecoupledGraphRuntimeCreate(args[0], args[1], contexts, false);
-    std::cout << "FUNC_EXIT CREATE RUNTIME" << std::endl;
+    // std::cout << "FUNC_EXIT CREATE RUNTIME" << std::endl;
   });
 
 TVM_REGISTER_GLOBAL("tvm.decoupled_graph_runtime.create_contiguous")
   .set_body([](TVMArgs args, TVMRetValue* rv) {
-    std::cout << "FUNC_ENTER CREATE CONTIGUOUS RUNTIME" << std::endl;
+    // std::cout << "FUNC_ENTER CREATE CONTIGUOUS RUNTIME" << std::endl;
     CHECK_GE(args.num_args, 4)
         << "The expected number of arguments for graph_runtime.create is "
            "at least 4, but it has "
         << args.num_args;
     const auto& contexts = GetAllContext(args);
     *rv = DecoupledGraphRuntimeCreate(args[0], args[1], contexts, true);
-    std::cout << "FUNC_EXIT CREATE CONTIGUOUS RUNTIME" << std::endl;
+    // std::cout << "FUNC_EXIT CREATE CONTIGUOUS RUNTIME" << std::endl;
   });
 
 TVM_REGISTER_GLOBAL("tvm.decoupled_graph_runtime.remote_create")
