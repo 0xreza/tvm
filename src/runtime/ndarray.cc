@@ -152,6 +152,15 @@ NDArray NDArray::Empty(int64_t length,
   return NDArray::Empty(shape, dtype, ctx);
 }
 
+void* NDArray::dataptr() {
+  return (data_ == nullptr) ? nullptr : static_cast<void*>(data_->dl_tensor.data);
+}
+
+void NDArray::evict() {
+  if (data_ != nullptr) {
+    data_->dl_tensor.data = nullptr; // stop it from calling free otherwise
+  }
+}
 
 uint64_t NDArray::Size() {
   return static_cast<uint64_t>(GetDataSize(this->data_->dl_tensor));

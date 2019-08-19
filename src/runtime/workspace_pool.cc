@@ -3,7 +3,7 @@
  * \file workspace_pool.h
  * \brief Workspace pool utility.
  */
-#include "workspace_pool.h"
+#include <tvm/runtime/workspace_pool.h>
 
 namespace tvm {
 namespace runtime {
@@ -38,12 +38,12 @@ class WorkspacePool::Pool {
       free_list_.pop_back();
       if (e.size < nbytes) {
         // resize the page
-        device->FreeDataSpace(ctx, e.data);
-        e.data = device->AllocDataSpace(ctx, nbytes, kTempAllocaAlignment, type);
+        device->FreeDataSpace(ctx, e.data, true);
+        e.data = device->AllocDataSpace(ctx, nbytes, kTempAllocaAlignment, type, true);
         e.size = nbytes;
       }
     } else if (free_list_.size() == 1) {
-      e.data = device->AllocDataSpace(ctx, nbytes, kTempAllocaAlignment, type);
+      e.data = device->AllocDataSpace(ctx, nbytes, kTempAllocaAlignment, type, true);
       e.size = nbytes;
     } else {
       if (free_list_.back().size >= nbytes) {
@@ -56,8 +56,8 @@ class WorkspacePool::Pool {
         // resize the page
         e = free_list_.back();
         free_list_.pop_back();
-        device->FreeDataSpace(ctx, e.data);
-        e.data = device->AllocDataSpace(ctx, nbytes, kTempAllocaAlignment, type);
+        device->FreeDataSpace(ctx, e.data, true);
+        e.data = device->AllocDataSpace(ctx, nbytes, kTempAllocaAlignment, type, true);
         e.size = nbytes;
       }
     }
@@ -96,7 +96,7 @@ class WorkspacePool::Pool {
   void Release(TVMContext ctx, DeviceAPI* device) {
     CHECK_EQ(allocated_.size(), 1);
     for (size_t i = 1; i < free_list_.size(); ++i) {
-      device->FreeDataSpace(ctx, free_list_[i].data);
+      device->FreeDataSpace(ctx, free_list_[i].data, true);
     }
     free_list_.clear();
   }

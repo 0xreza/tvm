@@ -52,7 +52,8 @@ class VPIDeviceAPI final : public runtime::DeviceAPI {
   void* AllocDataSpace(TVMContext ctx,
                        size_t size,
                        size_t alignment,
-                       TVMType type_hint) final {
+                       TVMType type_hint,
+                       bool workspace = false) final {
     // always align to 32 bytes at least.
     CHECK_LE(alignment, runtime::kAllocAlignment);
     alignment = runtime::kAllocAlignment;
@@ -80,7 +81,7 @@ class VPIDeviceAPI final : public runtime::DeviceAPI {
       return ret;
     }
   }
-  void FreeDataSpace(TVMContext ctx, void* ptr) final {
+  void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
     size_t head = reinterpret_cast<size_t>(ptr);
     Block& b = block_map_.at(head);
     b.is_free = true;

@@ -4,7 +4,7 @@
  */
 
  #include <tvm/runtime/executor.h>
- #include "../cuda/cuda_common.h"
+ #include <tvm/runtime/cuda_common.h>
  #include <chrono>
 
  namespace tvm {
@@ -39,12 +39,7 @@
        // actually do the task
        t.operation();
 
-       // sync if it is a device operation
-       if (syncAfterOp_) {
-         CUDA_CALL(cudaStreamSynchronize(CUDAThreadEntry::ThreadLocal()->stream));
-       }
-
-       LOCKED_LOG("TASK_END");
+       LOCKED_LOG("TASK_END", t.modelname);
 
        // mark this task as complete
        t.done.store(true);

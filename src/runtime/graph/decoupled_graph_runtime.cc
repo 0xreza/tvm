@@ -174,10 +174,12 @@ void DecoupledGraphRuntime::LoadParams(const std::string& param_blob) {
 void DecoupledGraphRuntime::LoadParams(dmlc::Stream* strm) {
   if (this->tempParams_ != nullptr) {
     delete this->tempParams_;
+    this->tempParams_ = nullptr;
   }
 
   if (this->copyParamsToEIDs_ != nullptr) {
     delete this->copyParamsToEIDs_;
+    this->copyParamsToEIDs_ = nullptr;
   }
   uint64_t header, reserved;
   CHECK(strm->Read(&header))
@@ -224,18 +226,10 @@ void DecoupledGraphRuntime::UploadParams() {
       uint32_t eid = copyParamsToEIDs_[i];
       CHECK_LT(eid, data_entry_.size());
       data_entry_[eid].CopyFrom(*this->tempParams_[i]);
-      delete this->tempParams_[i];
     }
-
-    delete this->copyParamsToEIDs_;
-    this->copyParamsToEIDs_ = nullptr;
-    delete this->tempParams_;
-    this->tempParams_ = nullptr;
   } else {
     CHECK(contiguous_input_memory.size > 0) << "contiguous memory not setup correctly";
     contiguous_input_memory.backing_array.CopyFrom(*contiguous_input_memory.tempParamsArray);
-    delete contiguous_input_memory.tempParamsArray;
-    contiguous_input_memory.tempParamsArray = nullptr;
   }
   auto load_end = std::chrono::high_resolution_clock::now();
   auto  load_dur = std::chrono::duration_cast<std::chrono::nanoseconds>(load_end - load_start);
@@ -246,7 +240,7 @@ void DecoupledGraphRuntime::UploadParams() {
  * \brief Do necessary transfers to device.
  * \param param_blob A binary blob of parameter.
  */
-void DecoupledGraphRuntime::LoadToDevice() {
+void* DecoupledGraphRuntime::LoadToDevice() {
   // Allocate and assign the storage we need on the device as previously
   // calculated in SetupStorage or SetupStorageContiguous
   this->AllocateStorageSpace();
@@ -258,6 +252,8 @@ void DecoupledGraphRuntime::LoadToDevice() {
   // With storage allocated, we can upload the parameters previously loaded
   // from a binary blob into the appropriate memory locations on device
   this->UploadParams();
+
+  return (contiguous_input_memory.size > 0) ? contiguous_input_memory.backing_array.dataptr() : nullptr;
 }
 
 NDArray DecoupledGraphRuntime::GetConstParams() {
@@ -438,11 +434,10 @@ void DecoupledGraphRuntime::SetupStorageContiguous() {
 
 
   // Divide into contiguous GPU storage and the rest (TODO: generalize to any ctxs)
-  // can we generalize by having a map from device_type to contiguous memory?
   std::vector<storage_spec> gpu_contiguous_storage;
   for (const auto &e : specs) {
     const storage_spec &s = e.second;
-    if (s.is_input && s.device_type == kDLGPU) {
+    if (s.device_type == kDLGPU) {
       gpu_contiguous_storage.push_back(s);
     } else {
       PoolEntry pe(s.size, s.device_type, s.storage_id);
@@ -558,6 +553,7 @@ std::string DecoupledGraphRuntime::SaveParams() {
 void DecoupledGraphRuntime::LoadParamsContiguously(const std::string& param_blob) {
   if (this->contiguous_input_memory.tempParamsArray != nullptr) {
     delete this->contiguous_input_memory.tempParamsArray;
+    this->contiguous_input_memory.tempParamsArray = nullptr;
   }
   dmlc::MemoryStringStream strm(const_cast<std::string*>(&param_blob));
   this->contiguous_input_memory.tempParamsArray = new NDArray();
@@ -644,7 +640,19 @@ PackedFunc DecoupledGraphRuntime::GetFunction(
   } else if (name == "load_to_device") {
     return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
       // std::cout << "FUNC_ENTER " << name << std::endl;
-        this->LoadToDevice();
+        *rv = this->LoadToDevice();
+        // std::cout << "FUNC_EXIT " << name << std::endl;
+      });
+  } else if (name == "evicted") {
+    return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
+      // std::cout << "FUNC_ENTER " << name << std::endl;
+        this->contiguous_input_memory.backing_array.evict();
+        // std::cout << "FUNC_EXIT " << name << std::endl;
+      });
+  } else if (name == "get_contig_context") {
+    return PackedFunc([sptr_to_self, this, name](TVMArgs args, TVMRetValue* rv) {
+      // std::cout << "FUNC_ENTER " << name << std::endl;
+        *rv = this->contiguous_input_memory.ctx;
         // std::cout << "FUNC_EXIT " << name << std::endl;
       });
   } else if (name == "save_params") {

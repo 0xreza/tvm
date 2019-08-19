@@ -11,6 +11,7 @@
 #include <queue>
 #include <thread>
 #include <mutex>
+#include <cstdio>
 
 namespace tvm {
 namespace runtime {
@@ -22,9 +23,28 @@ namespace runtime {
   }
 
 
-  #define LOCKED_LOG(x) {                                                      \
+  #define LOCKED_LOG(x, y) {                                                   \
+    const long time = now_in_ms();                                             \
+    if (y == "resnet50") {                                                     \
+      outLock.lock();                                                          \
+      std::cout << x << " " << time << std::endl;                              \
+      outLock.unlock();                                                        \
+    }                                                                          \
+  }
+
+  #define PRE_LOCKED_LOG(x, y) {                                               \
+    if (y == "resnet50") {                                                     \
+      outLock.lock();                                                          \
+      const long time = now_in_ms();                                           \
+      std::cout << x << " " << time << std::endl;                              \
+      outLock.unlock();                                                        \
+    }                                                                          \
+  }
+
+  #define TIMESTAMP(x) {                                                       \
+    const long time = now_in_ms();                                             \
     outLock.lock();                                                            \
-    std::cout << x << " " << now_in_ms() << std::endl;                         \
+    std::cout << x << " " << time << std::endl;                                \
     outLock.unlock();                                                          \
   }
 
@@ -33,7 +53,13 @@ namespace runtime {
     std::atomic<bool> nextHasCecked; // has the next op in pipeline checked for completion
     std::function<void(void)> operation;
     Task* previousTask;
-    Task(std::function<void(void)> op, Task* prev = nullptr) : operation(std::move(op)), previousTask(prev) {
+    std::string modelname;
+    Task(std::function<void(void)> op, Task* prev = nullptr, const std::string& name = "") : operation(std::move(op)), previousTask(prev), modelname(name) {
+      done.store(false);
+      nextHasCecked.store(false);
+    }
+
+    Task(std::function<void(void)> op, const std::string& name) : operation(std::move(op)), previousTask(nullptr), modelname(name) {
       done.store(false);
       nextHasCecked.store(false);
     }
@@ -41,6 +67,7 @@ namespace runtime {
     Task(Task&& other) : done(false), nextHasCecked(false) {
       operation = std::move(other.operation);
       previousTask = other.previousTask;
+      modelname = std::move(other.modelname);
     }
   } Task;
 
@@ -59,6 +86,10 @@ namespace runtime {
     }
 
     Task* addTask(Task& t);
+
+    bool empty() {
+      return tasks_.size() == 0;
+    }
 
   private:
     std::queue<Task> tasks_;

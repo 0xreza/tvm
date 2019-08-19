@@ -9,7 +9,7 @@
 #include <cuda_runtime.h>
 #include <tvm/runtime/packed_func.h>
 #include <string>
-#include "../workspace_pool.h"
+#include <tvm/runtime/workspace_pool.h>
 
 #include <chrono>
 #include <ctime>
@@ -158,6 +158,19 @@ class CUDAThreadEntry {
   CUDAThreadEntry();
   // get the threadlocal workspace
   static CUDAThreadEntry* ThreadLocal();
+};
+
+/*! \brief Thread local workspace */
+class ManagedCUDAThreadEntry {
+ public:
+  /*! \brief The cuda stream */
+  cudaStream_t stream{nullptr};
+  /*! \brief thread local pool*/
+  WorkspacePool pool;
+  /*! \brief constructor */
+  ManagedCUDAThreadEntry();
+  // get the threadlocal workspace
+  static ManagedCUDAThreadEntry* ThreadLocal();
 };
 }  // namespace runtime
 }  // namespace tvm

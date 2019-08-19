@@ -35,9 +35,18 @@ class DecoupledGraphRuntime : public ModuleNode {
   //   std::cout << "Creating GraphRuntime" << std::endl;
   // }
 
-  // virtual ~GraphRuntime() {
-  //   std::cout << "Destroying GraphRuntime" << std::endl;
-  // }
+  virtual ~DecoupledGraphRuntime() {
+    if (tempParams_ != nullptr) {
+      for (size_t i = 0; i < this->paramsSize_; ++i) {
+        delete this->tempParams_[i];
+      }
+
+      delete this->copyParamsToEIDs_;
+      delete this->tempParams_;
+    } else {
+      delete contiguous_input_memory.tempParamsArray;
+    }
+  }
 
   /*!
    * \brief Get member function to front-end
@@ -131,7 +140,7 @@ class DecoupledGraphRuntime : public ModuleNode {
    * \brief Do necessary transfers to device.
    * \param param_blob A binary blob of parameter.
    */
-  void LoadToDevice();
+  void* LoadToDevice();
 
   /*!
    * \brief Get the tensor vector pointer.

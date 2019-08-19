@@ -8,7 +8,7 @@
 #include <dmlc/thread_local.h>
 #include <vta/runtime.h>
 
-#include "../../src/runtime/workspace_pool.h"
+#include <tvm/runtime/workspace_pool.h>
 
 
 namespace tvm {
@@ -27,11 +27,12 @@ class VTADeviceAPI final : public DeviceAPI {
   void* AllocDataSpace(TVMContext ctx,
                        size_t size,
                        size_t alignment,
-                       TVMType type_hint) final {
+                       TVMType type_hint,
+                       bool workspace = false) final {
     return VTABufferAlloc(size);
   }
 
-  void FreeDataSpace(TVMContext ctx, void* ptr) final {
+  void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
     VTABufferFree(ptr);
   }
 

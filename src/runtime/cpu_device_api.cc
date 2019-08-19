@@ -9,7 +9,7 @@
 #include <tvm/runtime/device_api.h>
 #include <cstdlib>
 #include <cstring>
-#include "workspace_pool.h"
+#include <tvm/runtime/workspace_pool.h>
 
 namespace tvm {
 namespace runtime {
@@ -24,7 +24,8 @@ class CPUDeviceAPI final : public DeviceAPI {
   void* AllocDataSpace(TVMContext ctx,
                        size_t nbytes,
                        size_t alignment,
-                       TVMType type_hint) final {
+                       TVMType type_hint,
+                       bool workspace = false) final {
     // // For now just use cuda malloc for CPU data spaces
     //std::cout << "Alloc CPU data space " << nbytes << std::endl;
     void* ptr;
@@ -42,7 +43,7 @@ class CPUDeviceAPI final : public DeviceAPI {
     return ptr;
   }
 
-  void FreeDataSpace(TVMContext ctx, void* ptr) final {
+  void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
 // #if _MSC_VER
 //     _aligned_free(ptr);
 // #else

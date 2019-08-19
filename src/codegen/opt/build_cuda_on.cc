@@ -15,7 +15,7 @@
 
 #include "../codegen_cuda.h"
 #include "../build_common.h"
-#include "../../runtime/cuda/cuda_common.h"
+#include <tvm/runtime/cuda_common.h>
 #include "../../runtime/cuda/cuda_module.h"
 
 

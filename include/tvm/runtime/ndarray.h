@@ -170,6 +170,10 @@ class NDArray {
                                DLDataType dtype,
                                DLContext ctx);
 
+  TVM_DLL void* dataptr();
+
+  TVM_DLL void evict();
+
   TVM_DLL uint64_t Size();
 
 

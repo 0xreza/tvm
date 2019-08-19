@@ -12,7 +12,7 @@
 #include <string>
 #include <mutex>
 #include <chrono>
-#include "cuda_common.h"
+#include <tvm/runtime/cuda_common.h>
 #include "../pack_args.h"
 #include "../thread_storage_scope.h"
 #include "../meta_data.h"
