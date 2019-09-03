@@ -10,27 +10,30 @@
 #include <tvm/runtime/executor.h>
 #include <tvm/runtime/managed_cuda_device_api.h>
 #include <climits>
+#include <cstdlib>
 #include <map>
 #include <unistd.h>
 
 namespace tvm {
 namespace runtime {
 
+  static int kEvictionRate = 0;
+
   extern std::mutex outLock;
 
   class Manager : public EvictionHandler {
   public:
-    Manager() : disk_(false, false),
-                cpu_(false, true),
-                load_to_device_(true, false),
-                upload_inputs_(true, false),
-                gpu_(true, false),
-                d2h_pcie_(true, true) {
+    Manager() : disk_(false),
+                cpu_(true),
+                load_to_device_(false),
+                upload_inputs_(false),
+                gpu_(false),
+                d2h_pcie_(true) {
       ManagedCUDADeviceAPI::Global()->SetEvictionHandler(this);
     }
 
     typedef std::pair<std::list<MemBlock>::const_iterator, std::list<MemBlock>::const_iterator> it_pair;
-    it_pair evict(const std::list<MemBlock>& mem, size_t nbytes) final {
+    it_pair evict(std::list<MemBlock>& mem, size_t nbytes) final {
       // find the shortest range with the memory we need and longest average
       // time since it was used
       auto evict_time = std::chrono::high_resolution_clock::now();
@@ -99,13 +102,12 @@ namespace runtime {
       return ret;
     }
 
-    void loadModel(const std::string& name, const std::string& source);
+    std::future<void> loadModel(const std::string& name, const std::string& source);
 
-    void infer(const std::string& name, const std::string& inputName,
-                DLTensor* input, int outIndex, DLTensor* output,
-                const std::function<void(void)>& callback) {
-      static std::mutex inferLock;
-      inferLock.lock();
+    std::future<void> infer(const std::string& name, const std::string& inputName,
+                DLTensor* input, int outIndex, DLTensor* output) {
+
+      //PRE_LOCKED_LOG("TASK queue_inf", name)
 
       while (!load_to_device_.empty()) {
         usleep(1000);
@@ -126,15 +128,20 @@ namespace runtime {
 
       model.last_use = std::chrono::high_resolution_clock::now();
 
-      if (model.status == ModelStatus::READY) {
-        infer_(model, inputName, input, outIndex, output, callback);
+      //LOCKED_LOG("TASK_END", name);
+
+      if (rand() % 100 < kEvictionRate) {
+        model.status = ModelStatus::EVICTED;
+        model.GetFunction("evicted")();
+        faux_evictions.insert(name);
+        return loadToGPUAndInfer_(model, inputName, input, outIndex, output);
+      } else if (model.status == ModelStatus::READY) {
+        return infer_(model, inputName, input, outIndex, output);
       } else if (model.status == ModelStatus::EVICTED) {
-        loadToGPUAndInfer_(model, inputName, input, outIndex, output, callback);
+        return loadToGPUAndInfer_(model, inputName, input, outIndex, output);
       } else {
         CHECK(false) << "We've gotten the lock for a model while it was in use.";
       }
-
-      inferLock.unlock();
     }
 
   private:
@@ -164,13 +171,11 @@ namespace runtime {
                                                      last_use(std::chrono::high_resolution_clock::now()) {}
     };
 
-    void loadToGPUAndInfer_(Model& model, const std::string& inputName,
-                  DLTensor* input, int outIndex, DLTensor* output,
-                  const std::function<void(void)>& callback);
+    std::future<void> loadToGPUAndInfer_(Model& model, const std::string& inputName,
+                  DLTensor* input, int outIndex, DLTensor* output);
 
-    void infer_(Model& model, const std::string& inputName, DLTensor* input,
-                  int outIndex, DLTensor* output,
-                  const std::function<void(void)>& callback);
+    std::future<void> infer_(Model& model, const std::string& inputName, DLTensor* input,
+                  int outIndex, DLTensor* output);
 
     // map from name to model and lock
     std::map<std::string, Model> models_;

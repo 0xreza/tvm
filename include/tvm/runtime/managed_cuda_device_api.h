@@ -20,7 +20,7 @@ namespace tvm {
 namespace runtime {
 
 static size_t total_copied_m = 0;
-static size_t kMemReservationSize = 1000000000;
+static size_t kMemReservationSize = 8000000000;
 
 class ManagedCUDADeviceAPI final : public DeviceAPI {
  public:
@@ -133,6 +133,20 @@ class ManagedCUDADeviceAPI final : public DeviceAPI {
     std::list<MemBlock>& mem = memory_[ctx.device_id];
     mem_locks_[ctx.device_id].lock(); // don't unlock until memory is claimed
     void *ret;
+
+    // in case memory was evicted because of our preset eviction rate, mark it
+    // as free right now
+    for (const auto& name : ev_handler_->faux_evictions) {
+      for (auto& block : mem) {
+        if (block.owner == name) {
+          block.isfree = true;
+          break;
+        }
+      }
+    }
+
+    ev_handler_->faux_evictions.clear();
+
     if (mem.size() == 0) { // initial reservation needs to be made
       CUDA_CALL(cudaMalloc(&ret, kMemReservationSize));
       MemBlock b(true, kMemReservationSize, ret);

@@ -144,6 +144,14 @@ NDArray NDArray::Empty(std::vector<int64_t> shape,
   return ret;
 }
 
+NDArray NDArray::Empty(std::vector<int64_t> shape, DLDataType dtype) {
+  DLContext cpu_ctx;
+  cpu_ctx.device_type = kDLCPU;
+  cpu_ctx.device_id = 0;
+
+  return NDArray::Empty(shape, dtype, cpu_ctx);
+}
+
 NDArray NDArray::Empty(int64_t length,
                        DLDataType dtype,
                        DLContext ctx) {

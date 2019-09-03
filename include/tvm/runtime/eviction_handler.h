@@ -25,7 +25,9 @@ namespace runtime {
   public:
     virtual std::pair<std::list<MemBlock>::const_iterator,
                       std::list<MemBlock>::const_iterator>
-                      evict(const std::list<MemBlock>& mem, size_t nbytes) = 0;
+                      evict(std::list<MemBlock>& mem, size_t nbytes) = 0;
+
+    std::set<std::string> faux_evictions; // for setting eviction rates
   };
 
 } // namespace runtime

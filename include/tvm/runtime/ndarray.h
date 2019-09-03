@@ -6,6 +6,8 @@
 #ifndef TVM_RUNTIME_NDARRAY_H_
 #define TVM_RUNTIME_NDARRAY_H_
 
+#include <dmlc/memory_io.h>
+
 #include <atomic>
 #include <vector>
 #include <utility>
@@ -122,10 +124,21 @@ class NDArray {
    */
   inline bool Load(dmlc::Stream* stream);
   /*!
+   * \brief Load NDArray from string
+   * \param data The input data string
+   * \return Whether load is successful
+   */
+  inline bool Load(std::string& data);
+  /*!
    * \brief Save NDArray to stream
    * \param stream The output data stream
    */
   inline void Save(dmlc::Stream* stream) const;
+  /*!
+   * \brief Save NDArray to string
+   * \param out the string to save to
+   */
+  inline void Save(std::string& out) const;
   /*!
    * \brief Create a NDArray that shares the data memory with the current one.
    * \param shape The shape of the new array.
@@ -159,6 +172,13 @@ class NDArray {
   TVM_DLL static NDArray Empty(std::vector<int64_t> shape,
                                DLDataType dtype,
                                DLContext ctx);
+   /*!
+    * \brief Create an empty NDArray, assuming the datatype is float
+    *        and the context is cpu.
+    * \param shape The shape of the new array.
+    * \return The created Array
+    */
+   TVM_DLL static NDArray Empty(std::vector<int64_t> shape, DLDataType dtype);
   /*!
    * \brief Create an empty 1-dimentional NDArray.
    * \param length The length of the array
@@ -425,8 +445,18 @@ inline bool SaveDLTensor(dmlc::Stream* strm,
   return true;
 }
 
+inline bool SaveDLTensor(std::string& out, DLTensor* tensor) {
+  dmlc::MemoryStringStream strm(&out);
+  return SaveDLTensor(&strm, tensor);
+}
+
 inline void NDArray::Save(dmlc::Stream* strm) const {
   SaveDLTensor(strm, const_cast<DLTensor*>(operator->()));
+}
+
+inline void NDArray::Save(std::string& out) const {
+  dmlc::MemoryStringStream strm(&out);
+  Save(&strm);
 }
 
 inline bool NDArray::Load(dmlc::Stream* strm) {
@@ -471,6 +501,11 @@ inline bool NDArray::Load(dmlc::Stream* strm) {
   }
   *this = ret;
   return true;
+}
+
+inline bool NDArray::Load(std::string& data) {
+  dmlc::MemoryStringStream strm(&data);
+  return Load(&strm);
 }
 
 }  // namespace runtime

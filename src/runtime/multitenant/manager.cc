@@ -4,16 +4,21 @@
 #include <tvm/runtime/registry.h>
 #include <tvm/runtime/packed_func.h>
 #include <chrono>
+#include <future>
 
 #include "util/shmem.h"
 
 namespace tvm {
 namespace runtime {
 
+  extern std::mutex outLock;
+
   const int device_type = kDLGPU;
   const int device_id = 0;
 
-  void Manager::loadModel(const std::string& name, const std::string& source) {
+  std::future<void> Manager::loadModel(const std::string& name, const std::string& source) {
+
+    auto ret = std::make_shared<std::promise<void>>();
 
     this->mapLock_.lock();
     this->modelLocks_[name].lock();
@@ -21,8 +26,7 @@ namespace runtime {
 
     cpuExecLock_.lock();
 
-    Task loadFromDisk([=] {
-      PRE_LOCKED_LOG("TASK disk_load", name);
+    Task loadFromDisk("disk_load", [=] {
       const PackedFunc load_module(*tvm::runtime::Registry::Get("module.loadfile_so"));
 
       // load graph structure
@@ -36,19 +40,21 @@ namespace runtime {
       params_in.close();
 
       // module containing host and dev code
+      std::cout << source + ".so changes to\n";
       Module mod_syslib = load_module(copy_to_memory(source + ".so"), "so");
+      std::cout << "and that might not make sense\n";
 
       sourceLock_.lock();
       modelSource_.emplace(name, std::make_tuple(
           json_data, params_data, std::move(mod_syslib)
       ));
       sourceLock_.unlock();
+
+      return [](){}; // nothing happens on gpu so pass a nop
     }, name);
-
     Task* prev = disk_.addTask(loadFromDisk);
-    Task createModel([=]{
-      PRE_LOCKED_LOG("TASK cpu", name);
 
+    Task createModel("cpu", [=]{
       sourceLock_.lock();
       std::string* json_data = std::get<0>(modelSource_[name]);
       std::string* params_data = std::get<1>(modelSource_[name]);
@@ -70,7 +76,6 @@ namespace runtime {
       this->mapLock_.unlock();
 
       load_params(params_arr);
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
       this->mapLock_.lock();
       this->modelLocks_[name].unlock();
@@ -82,117 +87,135 @@ namespace runtime {
       sourceLock_.lock();
       modelSource_.erase(name);
       sourceLock_.unlock();
-    }, prev, name);
 
-    cpu_.addTask(createModel);
+      return [=](){
+        ret->set_value();
+      }; // nothing happens on gpu so pass a nop
+    }, prev, name);
+    Task* next = cpu_.addTask(createModel);
+
+    prev->setNextTask(next);
 
     cpuExecLock_.unlock();
 
+    return ret->get_future();
   }
 
-  void Manager::loadToGPUAndInfer_(Model& model, const std::string& inputName,
-                DLTensor* input, int outIndex, DLTensor* output,
-                const std::function<void(void)>& callback) {
+  std::future<void> Manager::loadToGPUAndInfer_(Model& model, const std::string& inputName,
+                DLTensor* input, int outIndex, DLTensor* output) {
+    auto ret = std::make_shared<std::promise<void>>();
+
     // lock on executors and enqueue the tasks
     this->execLock_.lock();
     model.status = ModelStatus::IN_USE;
 
-    Task copyToDevice([=, &model] {
-      PRE_LOCKED_LOG("TASK load_to_device", model.name);
+    Task copyToDevice("load_to_device", [=, &model] {
       PackedFunc load = model.GetFunction("load_to_device");
       auto ctx = model.GetFunction("get_contig_context")();
 
-      const void* memaddr = load().operator void*();
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
+      void* memaddr = load().operator void*();
       ManagedCUDADeviceAPI::Global()->ClaimOwnership(ctx, memaddr, model.name);
+      return []() {};
     }, model.name);
-
     Task* prev = this->load_to_device_.addTask(copyToDevice);
-    Task uploadInput([=, &model] {
-      PRE_LOCKED_LOG("TASK input", model.name);
+
+    Task uploadInput("input", [=, &model] {
       PackedFunc set_input = model.GetFunction("set_input");
       set_input(inputName, input);
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
+      return [](){}; // nothing happens on gpu so pass a nop
     }, prev, model.name);
+    Task* next = upload_inputs_.addTask(uploadInput);
 
-    prev = upload_inputs_.addTask(uploadInput);
-    Task run([=, &model] {
-      PRE_LOCKED_LOG("TASK run", model.name);
+    prev->setNextTask(next);
+    prev = next;
+
+    Task run("run", [=, &model] {
       PackedFunc run = model.GetFunction("run");
       run();
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
+      return [](){}; // nothing happens on gpu so pass a nop
     }, prev, model.name);
+    next = gpu_.addTask(run);
 
-    prev = gpu_.addTask(run);
-    Task getOutput([=, &model, &callback] {
-      PRE_LOCKED_LOG("TASK output", model.name);
+    prev->setNextTask(next);
+    prev = next;
+
+    Task getOutput("output", [=, &model] {
       PackedFunc get_output = model.GetFunction("get_output");
       get_output(outIndex, output);
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
-      // update model status
-      model.status = ModelStatus::READY;
-      model.last_use = std::chrono::high_resolution_clock::now();
-      TIMESTAMP("INFERENCE COMPLETE");
+      return [=, &model](){
+        // update model status
+        model.status = ModelStatus::READY;
+        model.last_use = std::chrono::high_resolution_clock::now();
+        //TIMESTAMP("INFERENCE COMPLETE");
 
-      // release model for use
-      this->mapLock_.lock();
-      this->modelLocks_[model.name].unlock();
-      this->mapLock_.unlock();
+        // release model for use
+        this->mapLock_.lock();
+        this->modelLocks_[model.name].unlock();
+        this->mapLock_.unlock();
 
-      std::thread(callback).detach();
+        ret->set_value();
+      };
     }, prev, model.name);
-
     this->d2h_pcie_.addTask(getOutput);
 
+    prev->setNextTask(next);
+
     this->execLock_.unlock();
+
+    return ret->get_future();
   }
 
-  void Manager::infer_(Model& model, const std::string& inputName,
-                DLTensor* input, int outIndex, DLTensor* output,
-                const std::function<void(void)>& callback) {
+  std::future<void> Manager::infer_(Model& model, const std::string& inputName,
+                DLTensor* input, int outIndex, DLTensor* output) {
+    auto ret = std::make_shared<std::promise<void>>();
+
     // lock on executors and enqueue the tasks
     this->execLock_.lock();
     model.status = ModelStatus::IN_USE;
 
-    Task uploadInput([=, &model] {
-      PRE_LOCKED_LOG("TASK input", model.name);
+    Task uploadInput("input", [=, &model] {
       PackedFunc set_input = model.GetFunction("set_input");
       set_input(inputName, input);
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
+      return [](){}; // nothing happens on gpu so pass a nop
     }, model.name);
-
     Task* prev = upload_inputs_.addTask(uploadInput);
-    Task run([=, &model] {
-      PRE_LOCKED_LOG("TASK run", model.name);
+
+    Task run("run", [=, &model] {
       PackedFunc run = model.GetFunction("run");
       run();
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
+      return [](){}; // nothing happens on gpu so pass a nop
     }, prev, model.name);
+    Task* next = gpu_.addTask(run);
 
-    prev = gpu_.addTask(run);
-    Task getOutput([=, &model, &callback] {
-      PRE_LOCKED_LOG("TASK output", model.name);
+    prev->setNextTask(next);
+    prev = next;
+
+    Task getOutput("output", [=, &model] {
       PackedFunc get_output = model.GetFunction("get_output");
       get_output(outIndex, output);
-      CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
-      // update model status
-      model.status = ModelStatus::READY;
-      model.last_use = std::chrono::high_resolution_clock::now();
-      TIMESTAMP("INFERENCE COMPLETE");
+      return [=, &model](){
+        // update model status
+        model.status = ModelStatus::READY;
+        model.last_use = std::chrono::high_resolution_clock::now();
+        //TIMESTAMP("INFERENCE COMPLETE");
 
-      // release model for use
-      this->mapLock_.lock();
-      this->modelLocks_[model.name].unlock();
-      this->mapLock_.unlock();
+        // release model for use
+        this->mapLock_.lock();
+        this->modelLocks_[model.name].unlock();
+        this->mapLock_.unlock();
 
-      std::thread(callback).detach();
+        ret->set_value();
+      };
     }, prev, model.name);
+    next = this->d2h_pcie_.addTask(getOutput);
 
-    this->d2h_pcie_.addTask(getOutput);
+    prev->setNextTask(next);
 
     this->execLock_.unlock();
+
+    return ret->get_future();
   }
 
 }  // namespace runtime
