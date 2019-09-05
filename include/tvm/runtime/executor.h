@@ -58,7 +58,7 @@ namespace runtime {
     std::atomic<bool> started; // has the op completed
     std::atomic<bool> nextHasCecked; // has the next op in pipeline checked for completion
     std::mutex handleDep;
-    std::function<std::function<void(void)>(void)> operation;
+    std::function<void(void)> operation;
     Task* previousTask;
     Task* nextTask = nullptr;
     std::string modelname;
@@ -68,12 +68,12 @@ namespace runtime {
       nextTask = next;
     }
 
-    Task(const std::string& t_name, std::function<std::function<void(void)>(void)> op, Task* prev = nullptr, const std::string& name = "") : task_name_(t_name), operation(std::move(op)), previousTask(prev), modelname(name) {
+    Task(const std::string& t_name, std::function<void(void)> op, Task* prev = nullptr, const std::string& name = "") : task_name_(t_name), operation(std::move(op)), previousTask(prev), modelname(name) {
       started.store(false);
       nextHasCecked.store(false);
     }
 
-    Task(const std::string& t_name, std::function<std::function<void(void)>(void)> op, const std::string& name) : task_name_(t_name), operation(std::move(op)), previousTask(nullptr), modelname(name) {
+    Task(const std::string& t_name, std::function<void(void)> op, const std::string& name) : task_name_(t_name), operation(std::move(op)), previousTask(nullptr), modelname(name) {
       started.store(false);
       nextHasCecked.store(false);
     }

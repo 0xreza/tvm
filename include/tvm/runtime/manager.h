@@ -27,8 +27,9 @@ namespace runtime {
                 cpu_(true),
                 load_to_device_(false),
                 upload_inputs_(false),
-                gpu_(false),
-                d2h_pcie_(true) {
+                gpu_(false, 8),
+                d2h_pcie_(false),
+                out_proc_(true) {
       ManagedCUDADeviceAPI::Global()->SetEvictionHandler(this);
     }
 
@@ -198,6 +199,7 @@ namespace runtime {
 
     Executor gpu_; // execute on gpu
     Executor d2h_pcie_; // copy outputs to host
+    Executor out_proc_; // any post processing needed after output is copied back
 
     // temp storage for loading from disk
     std::mutex sourceLock_;

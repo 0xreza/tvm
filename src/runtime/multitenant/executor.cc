@@ -17,7 +17,7 @@
    Executor::Executor(bool isLast, int threads) : keepGoing_(true),
                                                 isLast_(isLast),
                                                 nThreads_(threads),
-                                                tp_(threads),
+                                                tp_((threads < 2) ? 0 : threads),
                                                 runner_(&Executor::run, this) {
                                                   this->runner_.detach();
                                                 }
@@ -41,10 +41,14 @@
 
      set_core(static_cast<unsigned>(id));
 
-     // events used for timing each task
-     cudaEvent_t start, end;
-     CUDA_CALL(cudaEventCreate(&start));
-     CUDA_CALL(cudaEventCreate(&end));
+     // constants for right now
+     const int device_type = kDLGPU;
+     const int device_id = 0;
+
+     // set stream for the executor
+     TVMStreamHandle strm;
+     TVMStreamCreate(device_type, device_id, &strm);
+     TVMSetStream(device_type, device_id, strm);
 
      while (keepGoing_.load()) {
        taskMutex_.lock();
@@ -55,7 +59,6 @@
        Task& t = tasks_.front();
        taskMutex_.unlock();
 
-       t.handleDep.lock();
        if (t.previousTask != nullptr) {
          // wait for previous task to start
          while (!t.previousTask->started.load()) {}
@@ -66,51 +69,29 @@
          // mark the dependency as done so that other executor can move to the next task
          t.previousTask->nextHasCecked.store(true);
        }
-       t.handleDep.unlock();
 
        // event that will record all work queued on gpu stream
        CUDA_CALL(cudaEventCreateWithFlags(&t.sync, cudaEventBlockingSync | cudaEventDisableTiming));
 
-       // actually queue the operation and time it
-       CUDA_CALL(cudaEventRecord(start, ManagedCUDAThreadEntry::ThreadLocal()->stream));
-
-       auto postOp = t.operation();
-
-       //LOCKED_LOG("TASK_QUEUED " + t.task_name_, t.modelname);
+       t.operation();
 
        // record content of stream to sync on in the next executor's stream
        CUDA_CALL(cudaEventRecord(t.sync, ManagedCUDAThreadEntry::ThreadLocal()->stream));
-       CUDA_CALL(cudaEventRecord(end, ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
        // notify the next task that it can at least queue the next operation
        t.started.store(true);
 
-       // wait for operation to finish
-       CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
-
-       postOp();
-
-       // calculate runtime
-       float duration = 0.0f;
-       CUDA_CALL(cudaEventElapsedTime(&duration, start, end));
-
-       //LOCKED_LOG_TIME(t.modelname, "TASK_DUR " + t.task_name_, duration);
-
        // if the next task has already seen that this has started, it can be deleted
        // if it hasn't, remove the dependency as the task has already completed
        if (t.nextTask != nullptr) {
-         t.nextTask->handleDep.lock();
-         if (!t.nextHasCecked.load()) {
-           t.nextTask->previousTask = nullptr;
+         while (!t.nextHasCecked.load()) {
+
          }
-         t.nextTask->handleDep.unlock();
        }
 
-       // if (!isLast_) {
-       //   while (!t.nextHasCecked.load()) {}
-       // }
+       CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
-       // CUDA_CALL(cudaEventDestroy(t.sync));
+       // CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
        taskMutex_.lock();
        tasks_.pop();
@@ -130,12 +111,6 @@
        // std::cout << "are we getting here?\n";
        Task* t = new Task(std::move(task));
        std::function<void(void)> exec = [=](){
-         // events used for timing each task
-         cudaEvent_t start, end;
-         CUDA_CALL(cudaEventCreate(&start));
-         CUDA_CALL(cudaEventCreate(&end));
-         t->handleDep.lock();
-
          if (t->previousTask != nullptr) {
            // wait for previous task to start
            while (!t->previousTask->started.load()) {}
@@ -146,45 +121,27 @@
            // mark the dependency as done so that other executor can move to the next task
            t->previousTask->nextHasCecked.store(true);
          }
-         t->handleDep.unlock();
 
          // event that will record all work queued on gpu stream
          CUDA_CALL(cudaEventCreateWithFlags(&t->sync, cudaEventBlockingSync | cudaEventDisableTiming));
 
-         // actually queue the operation and time it
-         CUDA_CALL(cudaEventRecord(start, ManagedCUDAThreadEntry::ThreadLocal()->stream));
-
-         auto postOp = t->operation();
-
-         //LOCKED_LOG("TASK_QUEUED " + t->task_name_, t->modelname);
+         t->operation();
 
          // record content of stream to sync on in the next executor's stream
          CUDA_CALL(cudaEventRecord(t->sync, ManagedCUDAThreadEntry::ThreadLocal()->stream));
-         CUDA_CALL(cudaEventRecord(end, ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
          // notify the next task that it can at least queue the next operation
          t->started.store(true);
 
-         // wait for operation to finish
-         CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
-
-         postOp();
-
-         // calculate runtime
-         float duration = 0.0f;
-         CUDA_CALL(cudaEventElapsedTime(&duration, start, end));
-
-         //LOCKED_LOG_TIME(t->modelname, "TASK_DUR " + t->task_name_, duration);
-
          // if the next task has already seen that this has started, it can be deleted
          // if it hasn't, remove the dependency as the task has already completed
          if (t->nextTask != nullptr) {
-           t->nextTask->handleDep.lock();
-           if (!t->nextHasCecked.load()) {
-             t->nextTask->previousTask = nullptr;
+           while (!t->nextHasCecked.load()) {
+
            }
-           t->nextTask->handleDep.unlock();
          }
+
+         CUDA_CALL(cudaStreamSynchronize(ManagedCUDAThreadEntry::ThreadLocal()->stream));
 
          delete t;
        };

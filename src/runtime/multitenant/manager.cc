@@ -40,17 +40,13 @@ namespace runtime {
       params_in.close();
 
       // module containing host and dev code
-      std::cout << source + ".so changes to\n";
       Module mod_syslib = load_module(copy_to_memory(source + ".so"), "so");
-      std::cout << "and that might not make sense\n";
 
       sourceLock_.lock();
       modelSource_.emplace(name, std::make_tuple(
           json_data, params_data, std::move(mod_syslib)
       ));
       sourceLock_.unlock();
-
-      return [](){}; // nothing happens on gpu so pass a nop
     }, name);
     Task* prev = disk_.addTask(loadFromDisk);
 
@@ -88,9 +84,7 @@ namespace runtime {
       modelSource_.erase(name);
       sourceLock_.unlock();
 
-      return [=](){
-        ret->set_value();
-      }; // nothing happens on gpu so pass a nop
+      ret->set_value();
     }, prev, name);
     Task* next = cpu_.addTask(createModel);
 
@@ -115,14 +109,12 @@ namespace runtime {
 
       void* memaddr = load().operator void*();
       ManagedCUDADeviceAPI::Global()->ClaimOwnership(ctx, memaddr, model.name);
-      return []() {};
     }, model.name);
     Task* prev = this->load_to_device_.addTask(copyToDevice);
 
     Task uploadInput("input", [=, &model] {
       PackedFunc set_input = model.GetFunction("set_input");
       set_input(inputName, input);
-      return [](){}; // nothing happens on gpu so pass a nop
     }, prev, model.name);
     Task* next = upload_inputs_.addTask(uploadInput);
 
@@ -132,7 +124,6 @@ namespace runtime {
     Task run("run", [=, &model] {
       PackedFunc run = model.GetFunction("run");
       run();
-      return [](){}; // nothing happens on gpu so pass a nop
     }, prev, model.name);
     next = gpu_.addTask(run);
 
@@ -142,22 +133,26 @@ namespace runtime {
     Task getOutput("output", [=, &model] {
       PackedFunc get_output = model.GetFunction("get_output");
       get_output(outIndex, output);
-
-      return [=, &model](){
-        // update model status
-        model.status = ModelStatus::READY;
-        model.last_use = std::chrono::high_resolution_clock::now();
-        //TIMESTAMP("INFERENCE COMPLETE");
-
-        // release model for use
-        this->mapLock_.lock();
-        this->modelLocks_[model.name].unlock();
-        this->mapLock_.unlock();
-
-        ret->set_value();
-      };
     }, prev, model.name);
-    this->d2h_pcie_.addTask(getOutput);
+    next = this->d2h_pcie_.addTask(getOutput);
+
+    prev->setNextTask(next);
+    prev = next;
+
+    Task finish("post_output", [=, &model] {
+      // update model status
+      model.status = ModelStatus::READY;
+      model.last_use = std::chrono::high_resolution_clock::now();
+      //TIMESTAMP("INFERENCE COMPLETE");
+
+      // release model for use
+      this->mapLock_.lock();
+      this->modelLocks_[model.name].unlock();
+      this->mapLock_.unlock();
+
+      ret->set_value();
+    }, prev, model.name);
+    next = this->out_proc_.addTask(finish);
 
     prev->setNextTask(next);
 
@@ -177,14 +172,12 @@ namespace runtime {
     Task uploadInput("input", [=, &model] {
       PackedFunc set_input = model.GetFunction("set_input");
       set_input(inputName, input);
-      return [](){}; // nothing happens on gpu so pass a nop
     }, model.name);
     Task* prev = upload_inputs_.addTask(uploadInput);
 
     Task run("run", [=, &model] {
       PackedFunc run = model.GetFunction("run");
       run();
-      return [](){}; // nothing happens on gpu so pass a nop
     }, prev, model.name);
     Task* next = gpu_.addTask(run);
 
@@ -194,22 +187,25 @@ namespace runtime {
     Task getOutput("output", [=, &model] {
       PackedFunc get_output = model.GetFunction("get_output");
       get_output(outIndex, output);
-
-      return [=, &model](){
-        // update model status
-        model.status = ModelStatus::READY;
-        model.last_use = std::chrono::high_resolution_clock::now();
-        //TIMESTAMP("INFERENCE COMPLETE");
-
-        // release model for use
-        this->mapLock_.lock();
-        this->modelLocks_[model.name].unlock();
-        this->mapLock_.unlock();
-
-        ret->set_value();
-      };
     }, prev, model.name);
     next = this->d2h_pcie_.addTask(getOutput);
+
+    prev->setNextTask(next);
+    prev = next;
+
+    Task finish("post_output", [=, &model] {
+      // update model status
+      model.status = ModelStatus::READY;
+      model.last_use = std::chrono::high_resolution_clock::now();
+
+      // release model for use
+      this->mapLock_.lock();
+      this->modelLocks_[model.name].unlock();
+      this->mapLock_.unlock();
+
+      ret->set_value();
+    }, prev, model.name);
+    next = this->out_proc_.addTask(finish);
 
     prev->setNextTask(next);
 

@@ -4,10 +4,10 @@
 #include <vector>
 #include <memory>
 #include <exception>
+#include <chrono>
 #include <future>
 #include <mutex>
 #include <queue>
-
 
 
 #ifndef TVM_RUNTIME_BASIC_THREADPOOL_H
@@ -27,6 +27,7 @@ namespace runtime {
     ~ThreadPool() {
       queueLock.lock();
       while (!work.empty()) work.pop();
+      exit = true;
       queueLock.unlock();
       cv.notify_one();
       for (auto& worker : workers) {
@@ -66,17 +67,27 @@ namespace runtime {
     }
 
     void worker(int id) {
+      // separate streams for everybody rn
+      // constants for right now
+      const int device_type = kDLGPU;
+      const int device_id = 0;
+
+      // set stream for the executor
+      TVMStreamHandle strm;
+      TVMStreamCreate(device_type, device_id, &strm);
+      TVMSetStream(device_type, device_id, strm);
+
       while (true) {
         std::unique_lock<std::mutex> lk(queueLock);
 
-        if (work.size() == 0) {
-          cv.wait(lk);
-        }
-
-        if (work.size() == 0) {
-          // if the size is still 0 after being woke, time to exit
-          cv.notify_one();
-          return;
+        while (work.size() == 0) {
+          if (!exit) {
+            cv.wait_for(lk, std::chrono::seconds(1));
+          } else if (exit) {
+            lk.unlock();
+            cv.notify_all();
+            return;
+          }
         }
 
         // we have the lock and there is work in the queue
@@ -90,6 +101,7 @@ namespace runtime {
   private:
     std::vector<std::thread> workers;
     std::queue<std::function<void(void)>> work;
+    bool exit = false;
 
     std::mutex queueLock;
     std::condition_variable cv;
