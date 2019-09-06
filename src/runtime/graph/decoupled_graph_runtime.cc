@@ -257,6 +257,7 @@ void* DecoupledGraphRuntime::LoadToDevice() {
 }
 
 NDArray DecoupledGraphRuntime::GetConstParams() {
+  std::cout << "contiguous backing array size is " << this->contiguous_input_memory.backing_array.Size() << std::endl;
   NDArray gpu_contiguous = this->contiguous_input_memory.backing_array;
   return gpu_contiguous.CopyTo({kDLCPU, 0});
 }
@@ -312,6 +313,7 @@ void DecoupledGraphRuntime::AllocateStorageSpace() {
   }
 
   if (contiguous_input_memory.size == 0) {
+    std::cout << "Not using contiguous memory" << std::endl;
     // Allocate the space.
     for (const auto& pit : pool_entries_) {
       std::vector<int64_t> shape;
@@ -329,7 +331,9 @@ void DecoupledGraphRuntime::AllocateStorageSpace() {
   } else {
     // create contiguous memory
     contiguous_memory_allocation &contiguous = this->contiguous_input_memory;
+    std::cout << "Using contiguous memory " << contiguous.size << std::endl;
     contiguous.backing_array = NDArray::Empty(contiguous.size, DLDataType{kDLFloat, 32, 1}, contiguous.ctx);
+    std::cout << "alloc contiguous memory backing array of size " << contiguous.size << std::endl;
 
     // Create views onto the contiguous storage
     for (unsigned i = 0; i < contiguous.storage_ids.size(); i++) {
@@ -458,6 +462,8 @@ void DecoupledGraphRuntime::SetupStorageContiguous() {
   // push_back one more offset for size calculations without explicitly saving them
   contiguous.offsets.push_back(contiguous.size * 4);
   contiguous.ctx = gpu_contiguous_storage[0].ctx;
+
+  std::cout << "contiguous size is " << contiguous.size << std::endl;
 }
 
 void DecoupledGraphRuntime::SetupOpExecs() {

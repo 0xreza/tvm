@@ -10,7 +10,6 @@
 #include <dmlc/thread_local.h>
 #include <tvm/runtime/registry.h>
 #include <cuda_runtime.h>
-#include <tvm/runtime/eviction_handler.h>
 #include <tvm/runtime/cuda_common.h>
 #include <string>
 #include <iostream>
@@ -20,10 +19,50 @@ namespace tvm {
 namespace runtime {
 
 static size_t total_copied_m = 0;
-static size_t kMemReservationSize = 8000000000;
+
+/** Simple interface for implementing custom memory managers */
+class CUDAMemoryManager {
+public:
+  virtual void* alloc(int device, size_t nbytes, size_t alignment) = 0;
+  virtual void free(int device, void* ptr) = 0;
+};
+
+/** Memory manager that directly proxies cudaMalloc */
+class CUDAMallocMemoryManager : public CUDAMemoryManager {
+public:
+
+  void* alloc(int device, size_t nbytes, size_t alignment) {
+      CUDA_CALL(cudaSetDevice(device));
+      CHECK_EQ(256 % alignment, 0U)
+          << "CUDA space is aligned at 256 bytes";
+      void *ret;
+      CUDA_CALL(cudaMalloc(&ret, nbytes));
+      return ret;
+
+  }
+
+  void free(int device, void* ptr) {
+      CUDA_CALL(cudaSetDevice(device));
+      CUDA_CALL(cudaFree(ptr));
+  }
+
+};
 
 class ManagedCUDADeviceAPI final : public DeviceAPI {
- public:
+private:
+  CUDAMemoryManager* dataspacemanager = new CUDAMallocMemoryManager();
+  CUDAMemoryManager* workspacemanager = dataspacemanager;
+
+public:
+
+  void SetDataspaceManager(CUDAMemoryManager* manager) {
+    dataspacemanager = manager;
+  }
+
+  void SetWorkspaceManager(CUDAMemoryManager* manager) {
+    workspacemanager = manager;
+  }
+
   void SetDevice(TVMContext ctx) final {
     CUDA_CALL(cudaSetDevice(ctx.device_id));
   }
@@ -97,135 +136,24 @@ class ManagedCUDADeviceAPI final : public DeviceAPI {
     *rv = value;
   }
 
-  /* brief: mark the described block as owned by @param name */
-  void ClaimOwnership(TVMContext ctx, const void* address, const std::string& name) {
-    std::list<MemBlock>& mem = memory_[ctx.device_id];
-
-    auto it = mem.begin();
-    for (; it != mem.end(); it++) {
-      if (it->start == address) {
-        it->owner = name;
-        break;
-      }
-    }
-
-    CHECK (it != mem.end()) << "Block beginning at " << address << " does not "
-                            << "exist on device " << ctx.device_id << std::endl;
-    mem_locks_[ctx.device_id].unlock();
-  }
-
   void* AllocDataSpace(TVMContext ctx,
                        size_t nbytes,
                        size_t alignment,
                        TVMType type_hint,
                        bool workspace = false) final {
-    CUDA_CALL(cudaSetDevice(ctx.device_id));
-    CHECK_EQ(256 % alignment, 0U)
-        << "CUDA space is aligned at 256 bytes";
-
-    // we don't manage workspace memory
     if (workspace) {
-      void *ret;
-      CUDA_CALL(cudaMalloc(&ret, nbytes));
-      return ret;
-    }
-
-    std::list<MemBlock>& mem = memory_[ctx.device_id];
-    mem_locks_[ctx.device_id].lock(); // don't unlock until memory is claimed
-    void *ret;
-
-    // in case memory was evicted because of our preset eviction rate, mark it
-    // as free right now
-    for (const auto& name : ev_handler_->faux_evictions) {
-      for (auto& block : mem) {
-        if (block.owner == name) {
-          block.isfree = true;
-          break;
-        }
-      }
-    }
-
-    ev_handler_->faux_evictions.clear();
-
-    if (mem.size() == 0) { // initial reservation needs to be made
-      CUDA_CALL(cudaMalloc(&ret, kMemReservationSize));
-      MemBlock b(true, kMemReservationSize, ret);
-      mem.push_back(b);
-    }
-
-    // find a block of free memory with at least nbytes
-    auto it = mem.begin();
-    for (; it != mem.end(); it++) {
-      if (it->isfree && (it->size >= nbytes)) {
-        break;
-      }
-    }
-
-    if (it == mem.end()) {
-      // we need to evict something (assume we won't ever just expand to simplify management)
-      if (ev_handler_ != nullptr) {
-        auto range = ev_handler_->evict(mem, nbytes);
-        auto start = range.first;
-        auto end = range.second;
-        ret = range.first->start;
-        size_t total = 0;
-        int count = 0;
-        for (; range.first != range.second; range.first++) {
-          count++;
-          total += range.first->size;
-        }
-
-        CHECK(total >= nbytes) << "Eviction Handler did not free enough memory. "
-                               << "Needed: " << nbytes << ", got: " << total;
-
-        MemBlock allocated(false, nbytes, ret);
-        MemBlock stillfree(true, total - nbytes, ret + nbytes);
-        mem.insert(start, allocated);
-        if (stillfree.size > 0) {
-          mem.insert(start, stillfree);
-        }
-        auto it = std::prev(start); // pointing to leftover free block if it's there
-        mem.erase(start, end);
-
-        if (stillfree.size > 0) {
-          coalesceMemBlocks(it, mem);
-        }
-      }
+      return workspacemanager->alloc(ctx.device_id, nbytes, alignment);
     } else {
-      ret = it->start;
-      MemBlock allocated(false, nbytes, ret);
-      MemBlock stillfree(true, it->size - nbytes, ret + nbytes);
-      mem.insert(it, allocated);
-      if (stillfree.size > 0) {
-        mem.insert(it, stillfree);
-      }
-      mem.erase(it);
+      return dataspacemanager->alloc(ctx.device_id, nbytes, alignment);
     }
-
-    return ret;
   }
 
   void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
     if (workspace) {
-      CUDA_CALL(cudaSetDevice(ctx.device_id));
-      CUDA_CALL(cudaFree(ptr));
-      return;
+      workspacemanager->free(ctx.device_id, ptr);
+    } else {
+      dataspacemanager->free(ctx.device_id, ptr);
     }
-
-    std::list<MemBlock>& mem = memory_[ctx.device_id];
-    std::lock_guard<std::mutex> lock(mem_locks_[ctx.device_id]);
-    auto it = mem.begin();
-
-    // find block and mark it is as free
-    for (; it != mem.end(); it++) {
-      if (it->start == ptr) {
-        it->isfree = true;
-        it->owner = "";
-        break;
-      }
-    }
-
-    coalesceMemBlocks(it, mem);
   }
 
   void CopyDataFromTo(const void* from,
@@ -332,68 +260,7 @@ class ManagedCUDADeviceAPI final : public DeviceAPI {
     return inst;
   }
 
-  void SetEvictionHandler(EvictionHandler* eh) {
-    ev_handler_ = eh;
-  }
-
-  virtual ~ManagedCUDADeviceAPI() {
-    // if we don't wait on everything to be coalesced we may have someone trying
-    // to free this pooled memory after the api has been destructed
-    for (auto& it : memory_) {
-      auto& mem = it.second;
-      while (mem.size() > 1) {}
-      std::lock_guard<std::mutex> lock(mem_locks_[it.first]);
-      CUDA_CALL(cudaSetDevice(it.first));
-      CUDA_CALL(cudaFree(it.second.begin()->start));
-    }
-  }
-
  private:
-  // map from device id to list of memory
-  std::map<int,std::list<MemBlock>> memory_;
-
-  void printMemList(const std::list<MemBlock>& mem) {
-    for (auto it = mem.begin(); it != mem.end(); it++) {
-      std::cout << "<" << it->start << "|" << it->isfree << "|" << it->size << ">" << "->";
-    }
-    std::cout << "END\n";
-  }
-
-  void coalesceMemBlocks(std::list<MemBlock>::const_iterator it, std::list<MemBlock>& mem) {
-    // coalesce free memory around this block into a single block
-    auto start = it;
-    for (; start != mem.begin(); start--) {
-      if (!start->isfree) {
-        break;
-      }
-    }
-
-    // incase it hit the front of the list and it isn't free
-    if (!start->isfree) start++;
-
-    auto end = it;
-    for (; end != mem.end(); end++) {
-      if (!end->isfree) {
-        break;
-      }
-    }
-
-    // if there is an adjacent range of blocks that are all free, mush them into
-    // a single block
-    if (start != end) {
-      size_t total = 0;
-      for (auto it = start; it != end; it++) {
-        total += it->size;
-      }
-      MemBlock newfree(true, total, start->start);
-      mem.insert(start, newfree);
-      mem.erase(start, end);
-    }
-  }
-
-  std::map<int,std::mutex> mem_locks_;
-
-  EvictionHandler* ev_handler_ = nullptr;
 
   static void GPUCopy(const void* from,
                       void* to,
