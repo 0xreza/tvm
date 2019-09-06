@@ -439,9 +439,11 @@ class DecoupledGraphRuntime : public ModuleNode {
   typedef struct contiguous_memory_allocation {
     contiguous_memory_allocation() : size(0), tempParamsArray(nullptr) {}
     uint64_t size;
+    uint64_t paramsSize; // Size inside this memory allocation of the const params
     std::vector<uint32_t> storage_ids;
     std::vector<uint32_t> offsets;
     NDArray backing_array;
+    NDArray backing_array_params_view;
     NDArray* tempParamsArray;
     TVMContext ctx;
   } contiguous_memory_allocation;

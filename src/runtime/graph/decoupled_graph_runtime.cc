@@ -229,7 +229,7 @@ void DecoupledGraphRuntime::UploadParams() {
     }
   } else {
     CHECK(contiguous_input_memory.size > 0) << "contiguous memory not setup correctly";
-    contiguous_input_memory.backing_array.CopyFrom(*contiguous_input_memory.tempParamsArray);
+    contiguous_input_memory.backing_array_params_view.CopyFrom(*contiguous_input_memory.tempParamsArray);
   }
   auto load_end = std::chrono::high_resolution_clock::now();
   auto  load_dur = std::chrono::duration_cast<std::chrono::nanoseconds>(load_end - load_start);
@@ -257,13 +257,12 @@ void* DecoupledGraphRuntime::LoadToDevice() {
 }
 
 NDArray DecoupledGraphRuntime::GetConstParams() {
-  std::cout << "contiguous backing array size is " << this->contiguous_input_memory.backing_array.Size() << std::endl;
-  NDArray gpu_contiguous = this->contiguous_input_memory.backing_array;
+  NDArray gpu_contiguous = this->contiguous_input_memory.backing_array_params_view;
   return gpu_contiguous.CopyTo({kDLCPU, 0});
 }
 
 void DecoupledGraphRuntime::SetConstParams(NDArray params) {
-  params.CopyTo(this->contiguous_input_memory.backing_array);
+  params.CopyTo(this->contiguous_input_memory.backing_array_params_view);
 }
 
 void DecoupledGraphRuntime::SetupStorage() {
@@ -313,7 +312,6 @@ void DecoupledGraphRuntime::AllocateStorageSpace() {
   }
 
   if (contiguous_input_memory.size == 0) {
-    std::cout << "Not using contiguous memory" << std::endl;
     // Allocate the space.
     for (const auto& pit : pool_entries_) {
       std::vector<int64_t> shape;
@@ -331,9 +329,13 @@ void DecoupledGraphRuntime::AllocateStorageSpace() {
   } else {
     // create contiguous memory
     contiguous_memory_allocation &contiguous = this->contiguous_input_memory;
-    std::cout << "Using contiguous memory " << contiguous.size << std::endl;
     contiguous.backing_array = NDArray::Empty(contiguous.size, DLDataType{kDLFloat, 32, 1}, contiguous.ctx);
-    std::cout << "alloc contiguous memory backing array of size " << contiguous.size << std::endl;
+
+
+    // Create a view onto the contiguous memory of just the const params
+    std::vector<int64_t> paramsshape{{static_cast<int64_t>(contiguous.paramsSize)}};
+    contiguous.backing_array_params_view = contiguous.backing_array.CreateView(0, paramsshape, DLDataType{kDLFloat, 32, 1});
+    
 
     // Create views onto the contiguous storage
     for (unsigned i = 0; i < contiguous.storage_ids.size(); i++) {
@@ -407,6 +409,7 @@ void DecoupledGraphRuntime::SetupStorageContiguous() {
   for (uint32_t input_node_id : this->input_nodes_) {
     ds[input_node_id].is_input = true;
   }
+  ds[0].is_input = false; // "data" input isn't an input node.  hard code assuming input 0 is data, but should fix later TODO
 
   typedef struct storage_spec {
     storage_spec() : is_input(false), size(0) {}
@@ -438,11 +441,17 @@ void DecoupledGraphRuntime::SetupStorageContiguous() {
 
 
   // Divide into contiguous GPU storage and the rest (TODO: generalize to any ctxs)
-  std::vector<storage_spec> gpu_contiguous_storage;
+  std::vector<storage_spec> gpu_contiguous_inputs;
+  std::vector<storage_spec> gpu_contiguous_other;
+
   for (const auto &e : specs) {
     const storage_spec &s = e.second;
     if (s.device_type == kDLGPU) {
-      gpu_contiguous_storage.push_back(s);
+      if (s.is_input) {
+        gpu_contiguous_inputs.push_back(s);
+      } else {
+        gpu_contiguous_other.push_back(s);        
+      }
     } else {
       PoolEntry pe(s.size, s.device_type, s.storage_id);
       pool_entries_.push_back(pe);
@@ -454,16 +463,25 @@ void DecoupledGraphRuntime::SetupStorageContiguous() {
 
   // Describe the GPU contiguous storage
   contiguous_memory_allocation &contiguous = this->contiguous_input_memory;
-  for (storage_spec &s : gpu_contiguous_storage) {
+  for (storage_spec &s : gpu_contiguous_inputs) {
     contiguous.storage_ids.push_back(s.storage_id);
     contiguous.offsets.push_back(contiguous.size * 4);
     contiguous.size += (s.size + 3) / 4;
   }
+
+  // Mark the end of the const params
+  contiguous.paramsSize = contiguous.size;
+
+  // Now add inputs
+  for (storage_spec &s : gpu_contiguous_other) {
+    contiguous.storage_ids.push_back(s.storage_id);
+    contiguous.offsets.push_back(contiguous.size * 4);
+    contiguous.size += (s.size + 3) / 4;
+  }
+
   // push_back one more offset for size calculations without explicitly saving them
   contiguous.offsets.push_back(contiguous.size * 4);
-  contiguous.ctx = gpu_contiguous_storage[0].ctx;
-
-  std::cout << "contiguous size is " << contiguous.size << std::endl;
+  contiguous.ctx = gpu_contiguous_inputs[0].ctx;
 }
 
 void DecoupledGraphRuntime::SetupOpExecs() {
