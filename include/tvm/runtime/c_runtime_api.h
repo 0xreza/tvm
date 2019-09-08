@@ -266,6 +266,10 @@ TVM_DLL int TVMFuncCall(TVMFunctionHandle func,
                         TVMValue* ret_val,
                         int* ret_type_code);
 
+TVM_DLL int TVMBackendGetFuncFromEnv(void* mod_node,
+                             const char* func_name,
+                             TVMFunctionHandle *func);
+
 /*!
  * \brief Set the return value of TVMPackedCFunc.
  *
