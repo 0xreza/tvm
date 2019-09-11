@@ -48,12 +48,47 @@ public:
 
 };
 
+
+struct WorkspaceAlloc {
+  bool isalloc;
+  size_t size;
+  void* ptr;
+};
+
+class WorkspaceAllocTracker {
+public:
+  bool enabled = true;
+  std::vector<WorkspaceAlloc> allocs;
+
+  void alloc(size_t size, void* ptr) {
+    if (enabled) {
+      allocs.push_back(WorkspaceAlloc{true, size, ptr});
+    }
+  }
+
+  void free(void* ptr) {
+    if (enabled) {
+      allocs.push_back(WorkspaceAlloc{false, 0, ptr});
+    }
+  }
+
+  std::vector<WorkspaceAlloc> get() {
+    return allocs;
+  }
+
+  void clear() {
+    allocs.clear();
+  }
+};
+
+
 class ManagedCUDADeviceAPI final : public DeviceAPI {
 private:
   CUDAMemoryManager* dataspacemanager = new CUDAMallocMemoryManager();
   CUDAMemoryManager* workspacemanager = dataspacemanager;
 
 public:
+  WorkspaceAllocTracker tracker;
 
   void SetDataspaceManager(CUDAMemoryManager* manager) {
     dataspacemanager = manager;
@@ -151,6 +186,7 @@ public:
   void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
     if (workspace) {
       workspacemanager->free(ctx.device_id, ptr);
+      tracker.free(ptr);
     } else {
       dataspacemanager->free(ctx.device_id, ptr);
     }
@@ -246,10 +282,12 @@ public:
     // // std::cout << "Allocworkspace " << size << std::endl;
     void* address = ManagedCUDAThreadEntry::ThreadLocal()->pool.AllocWorkspace(ctx, size);
     // std::cout << "\t" << LOG_PREFIX() << "RSC USAGE: GPU MEM ALLOC_WORK " << size << " " << address << std::endl;
+    tracker.alloc(size, address);
     return address;
   }
 
   void FreeWorkspace(TVMContext ctx, void* data) final {
+    tracker.free(data);
     // std::cout << "\t" << LOG_PREFIX() << "RSC USAGE: GPU MEM FREE_WORK " << data << std::endl;
     ManagedCUDAThreadEntry::ThreadLocal()->pool.FreeWorkspace(ctx, data);
   }

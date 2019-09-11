@@ -195,6 +195,12 @@ class CUDAWrappedFunc {
     }
     CUstream strm = static_cast<CUstream>(ManagedCUDAThreadEntry::ThreadLocal()->stream);
     ThreadWorkLoad wl = thread_axis_cfg_.Extract(args);
+    // std::cout << "cuLaunchKernel " << wl.grid_dim(0) << " "
+    //                                << wl.grid_dim(1) << " "
+    //                                << wl.grid_dim(2) << " "
+    //                                << wl.block_dim(0) << " "
+    //                                << wl.block_dim(1) << " "
+    //                                << wl.block_dim(2) << std::endl;
     CUDA_LOG(
     CUresult result = cuLaunchKernel(
         fcache_[device_id],

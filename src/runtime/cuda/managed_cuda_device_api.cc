@@ -11,6 +11,7 @@ namespace runtime {
 typedef dmlc::ThreadLocalStore<ManagedCUDAThreadEntry> ManagedCUDAThreadStore;
 
 ManagedCUDAThreadEntry::ManagedCUDAThreadEntry()
+
     : pool(kDLGPU, ManagedCUDADeviceAPI::Global()) {
 }
 

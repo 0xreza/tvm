@@ -57,6 +57,7 @@ inline std::string now() {
 void GraphRuntime::Run() {
   // setup the array and requirements.
   for (size_t i = 0; i < op_execs_.size(); ++i) {
+    // std::cout << "Op " << i << " has ";
     if (op_execs_[i]) op_execs_[i]();
   }
 }
@@ -467,7 +468,19 @@ std::function<void()> GraphRuntime::CreateTVMOp(
   tvm::runtime::PackedFunc pf = module_.GetFunction(param.func_name, false);
   CHECK(pf != nullptr) << "no such function in module: " << param.func_name;
 
-  auto fexec = [arg_ptr, pf]() {
+  const std::string name = param.func_name;
+  auto fexec = [arg_ptr, pf, name]() {
+    // std::cout << "Calling " << name << std::endl;
+
+    // std::cout << arg_ptr->arg_values.size() << " inputs" << std::endl;
+    // for (unsigned i = 0; i < arg_ptr->arg_values.size(); i++) {
+    //   DLTensor* tensor = static_cast<DLTensor*>(arg_ptr->arg_values[i].v_handle);
+    //   std::cout << "Input " << i << " ndim=" << tensor->ndim << "shape=[";
+    //   for (unsigned j = 0; j < tensor->ndim; j++) {
+    //     std::cout << *(static_cast<int64_t*>(tensor->shape) + j) << " ";
+    //   }
+    //   std::cout << "]" << " datatype=" << tensor->dtype.code << "-" << tensor->dtype.bits << "-" << tensor->dtype.lanes << " stridesnull=" << (tensor->strides==nullptr) << " offset=" << tensor->byte_offset << std::endl;
+    // }
     TVMRetValue rv;
     TVMArgs targs(arg_ptr->arg_values.data(),
                   arg_ptr->arg_tcodes.data(),
