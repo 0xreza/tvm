@@ -12,6 +12,7 @@
 #include <tvm/base.h>
 #include <nvrtc.h>
 #include <cstdlib>
+#include <iostream>
 
 #include "../codegen_cuda.h"
 #include "../build_common.h"
@@ -87,6 +88,8 @@ std::string NVRTCCompile(const std::string& code, bool include_path = false) {
   for (const auto& string : compile_params) {
       param_cstrings.push_back(string.c_str());
   }
+
+  std::cout << "Compiling with nvrtc" << std::endl;
   NVRTC_CALL(nvrtcCreateProgram(
       &prog, code.c_str(), nullptr, 0, nullptr, nullptr));
   nvrtcResult compile_res =
