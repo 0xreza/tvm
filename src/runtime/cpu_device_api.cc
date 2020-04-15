@@ -45,7 +45,8 @@ class CPUDeviceAPI final : public DeviceAPI {
   void* AllocDataSpace(TVMContext ctx,
                        size_t nbytes,
                        size_t alignment,
-                       DLDataType type_hint) final {
+                       DLDataType type_hint,
+                       bool workspace = false) final {
     void* ptr;
 #if _MSC_VER
     ptr = _aligned_malloc(nbytes, alignment);
@@ -61,7 +62,7 @@ class CPUDeviceAPI final : public DeviceAPI {
     return ptr;
   }
 
-  void FreeDataSpace(TVMContext ctx, void* ptr) final {
+  void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
 #if _MSC_VER
     _aligned_free(ptr);
 #else

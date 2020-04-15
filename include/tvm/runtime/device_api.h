@@ -88,13 +88,14 @@ class TVM_DLL DeviceAPI {
   virtual void* AllocDataSpace(TVMContext ctx,
                                size_t nbytes,
                                size_t alignment,
-                               DLDataType type_hint) = 0;
+                               DLDataType type_hint,
+                               bool workspace = false) = 0;
   /*!
    * \brief Free a data space on device.
    * \param ctx The device context to perform operation.
    * \param ptr The data space.
    */
-  virtual void FreeDataSpace(TVMContext ctx, void* ptr) = 0;
+  virtual void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) = 0;
   /*!
    * \brief copy data from one place to another
    * \param from The source array.
@@ -202,6 +203,12 @@ class TVM_DLL DeviceAPI {
   static bool NeedSetDeviceContext(int device_type) {
     return device_type != kDLCPU && device_type != kDLMicroDev;
   }
+};
+
+struct WorkspaceAlloc {
+  bool isalloc;
+  size_t size;
+  void* ptr;
 };
 
 /*! \brief The device type bigger than this is RPC device */

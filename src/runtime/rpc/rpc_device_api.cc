@@ -41,7 +41,8 @@ class RPCDeviceAPI final : public DeviceAPI {
   void* AllocDataSpace(TVMContext ctx,
                        size_t nbytes,
                        size_t alignment,
-                       DLDataType type_hint) final {
+                       DLDataType type_hint,
+                       bool workspace = false) final {
     auto sess = GetSess(ctx);
     void *data = sess->CallRemote(
             RPCCode::kDevAllocData, ctx, nbytes, alignment, type_hint);
@@ -50,7 +51,7 @@ class RPCDeviceAPI final : public DeviceAPI {
     space->sess = std::move(sess);
     return space;
   }
-  void FreeDataSpace(TVMContext ctx, void* ptr) final {
+  void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
     RemoteSpace* space = static_cast<RemoteSpace*>(ptr);
     try {
       GetSess(ctx)->CallRemote(

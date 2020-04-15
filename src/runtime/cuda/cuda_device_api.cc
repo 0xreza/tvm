@@ -33,8 +33,73 @@
 namespace tvm {
 namespace runtime {
 
+/** Simple interface for implementing custom memory managers */
+class CUDAMemoryManager {
+public:
+  virtual void* alloc(int device, size_t nbytes, size_t alignment) = 0;
+  virtual void free(int device, void* ptr) = 0;
+};
+
+/** Memory manager that directly proxies cudaMalloc */
+class CUDAMallocMemoryManager : public CUDAMemoryManager {
+public:
+
+  void* alloc(int device, size_t nbytes, size_t alignment) {
+      void *ret;
+      CUDA_CALL(cudaSetDevice(device));
+      CUDA_CALL(cudaMalloc(&ret, nbytes));
+      return ret;
+
+  }
+
+  void free(int device, void* ptr) {
+      CUDA_CALL(cudaSetDevice(device));
+      CUDA_CALL(cudaFree(ptr));
+  }
+
+};
+
+class WorkspaceAllocTracker {
+public:
+  bool enabled = true;
+  std::vector<WorkspaceAlloc> allocs;
+
+  void alloc(size_t size, void* ptr) {
+    if (enabled) {
+      allocs.push_back(WorkspaceAlloc{true, size, ptr});
+    }
+  }
+
+  void free(void* ptr) {
+    if (enabled) {
+      allocs.push_back(WorkspaceAlloc{false, 0, ptr});
+    }
+  }
+
+  std::vector<WorkspaceAlloc>& get() {
+    return allocs;
+  }
+
+  void clear() {
+    allocs.clear();
+  }
+};
+
 class CUDADeviceAPI final : public DeviceAPI {
+  private:
+    CUDAMemoryManager* dataspacemanager = new CUDAMallocMemoryManager();
+    CUDAMemoryManager* workspacemanager = dataspacemanager;
+
  public:
+  WorkspaceAllocTracker tracker;
+
+  void SetDataspaceManager(CUDAMemoryManager* manager) {
+    dataspacemanager = manager;
+  }
+
+  void SetWorkspaceManager(CUDAMemoryManager* manager) {
+    workspacemanager = manager;
+  }
   void SetDevice(TVMContext ctx) final {
     CUDA_CALL(cudaSetDevice(ctx.device_id));
   }
@@ -111,25 +176,33 @@ class CUDADeviceAPI final : public DeviceAPI {
   void* AllocDataSpace(TVMContext ctx,
                        size_t nbytes,
                        size_t alignment,
-                       DLDataType type_hint) final {
+                       DLDataType type_hint,
+                       bool workspace = false) final {
     CHECK_EQ(256 % alignment, 0U)
           << "CUDA space is aligned at 256 bytes";
     void *ret;
     if (ctx.device_type == kDLCPUPinned) {
       CUDA_CALL(cudaMallocHost(&ret, nbytes));
     } else {
-      CUDA_CALL(cudaSetDevice(ctx.device_id));
-      CUDA_CALL(cudaMalloc(&ret, nbytes));
+      if (workspace) {
+        ret = workspacemanager->alloc(ctx.device_id, nbytes, alignment);
+      } else {
+        ret = dataspacemanager->alloc(ctx.device_id, nbytes, alignment);
+      }
     }
     return ret;
   }
 
-  void FreeDataSpace(TVMContext ctx, void* ptr) final {
+  void FreeDataSpace(TVMContext ctx, void* ptr, bool workspace = false) final {
     if (ctx.device_type == kDLCPUPinned) {
       CUDA_CALL(cudaFreeHost(ptr));
     } else {
-      CUDA_CALL(cudaSetDevice(ctx.device_id));
-      CUDA_CALL(cudaFree(ptr));
+      if (workspace) {
+        workspacemanager->free(ctx.device_id, ptr);
+        tracker.free(ptr);
+      } else {
+        dataspacemanager->free(ctx.device_id, ptr);
+      }
     }
   }
 
@@ -215,10 +288,13 @@ class CUDADeviceAPI final : public DeviceAPI {
   }
 
   void* AllocWorkspace(TVMContext ctx, size_t size, DLDataType type_hint) final {
-    return CUDAThreadEntry::ThreadLocal()->pool.AllocWorkspace(ctx, size);
+    void* addr = CUDAThreadEntry::ThreadLocal()->pool.AllocWorkspace(ctx, size);
+    tracker.alloc(size, addr);
+    return addr;
   }
 
   void FreeWorkspace(TVMContext ctx, void* data) final {
+    tracker.free(data);
     CUDAThreadEntry::ThreadLocal()->pool.FreeWorkspace(ctx, data);
   }
 
@@ -262,6 +338,30 @@ TVM_REGISTER_GLOBAL("device_api.cpu_pinned")
 .set_body([](TVMArgs args, TVMRetValue* rv) {
     DeviceAPI* ptr = CUDADeviceAPI::Global().get();
     *rv = static_cast<void*>(ptr);
+  });
+
+TVM_REGISTER_GLOBAL("enable_workspace_alloc_profiling")
+.set_body([](TVMArgs args, TVMRetValue* rv) {
+    CUDADeviceAPI* ptr = CUDADeviceAPI::Global().get();
+    ptr->tracker.enabled = true;
+  });
+
+TVM_REGISTER_GLOBAL("disable_workspace_alloc_profiling")
+.set_body([](TVMArgs args, TVMRetValue* rv) {
+    CUDADeviceAPI* ptr = CUDADeviceAPI::Global().get();
+    ptr->tracker.enabled = false;
+  });
+
+TVM_REGISTER_GLOBAL("get_gpu_workspace_allocs")
+.set_body([](TVMArgs args, TVMRetValue* rv) {
+    CUDADeviceAPI* ptr = CUDADeviceAPI::Global().get();
+    *rv = static_cast<void*>(&(ptr->tracker.get()));
+  });
+
+TVM_REGISTER_GLOBAL("clear_gpu_workspace_allocs")
+.set_body([](TVMArgs args, TVMRetValue* rv) {
+    CUDADeviceAPI* ptr = CUDADeviceAPI::Global().get();
+    ptr->tracker.clear();
   });
 
 }  // namespace runtime

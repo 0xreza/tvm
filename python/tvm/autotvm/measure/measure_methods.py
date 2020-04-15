@@ -593,7 +593,7 @@ def tvm_callback_cuda_compile(code):
     #   "-gencode", "arch=compute_52,code=sm_52",
     #   "-gencode", "arch=compute_70,code=sm_70"
     # ]
-    target = "fatbin" if isinstance(curr_cuda_target_arch, list) else "ptx"
+    target = "fatbin"
     ptx = nvcc.compile_cuda(code, target=target, arch=AutotvmGlobalScope.current.cuda_target_arch)
     return ptx
 

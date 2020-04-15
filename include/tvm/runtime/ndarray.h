@@ -142,6 +142,12 @@ class NDArray : public ObjectRef {
   TVM_DLL static NDArray Empty(std::vector<int64_t> shape,
                                DLDataType dtype,
                                DLContext ctx);
+
+
+  TVM_DLL void* dataptr();
+  TVM_DLL uint64_t Size();
+
+  
   /*!
    * \brief Create a NDArray backed by a dlpack tensor.
    *

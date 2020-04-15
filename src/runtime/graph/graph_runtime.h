@@ -91,6 +91,8 @@ class TVM_DLL GraphRuntime : public ModuleNode {
   }
   void Run();
 
+  std::vector<std::vector<WorkspaceAlloc>>* ProfileWorkspaceAllocs();
+
   /*!
    * \brief Initialize the graph executor with graph and context.
    * \param graph_json The execution graph.
