@@ -139,7 +139,7 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
             N, _, _, _ = get_const_tuple(data.shape)
             _, _, CI, CO = get_const_tuple(kernel.shape)
             if target.target_name == "cuda":
-                if nvcc.have_tensorcore(tvm.gpu(0).compute_version):
+                if nvcc.have_tensorcore("7.0"):
                     if (N % 16 == 0 and CI % 16 == 0 and CO % 16 == 0) or \
                             (N % 8 == 0 and CI % 16 == 0 and CO % 32 == 0) or \
                             (N % 32 == 0 and CI % 16 == 0 and CO % 8 == 0):
@@ -278,7 +278,7 @@ def conv3d_strategy_cuda(attrs, inputs, out_type, target):
         N, _, _, _, _ = get_const_tuple(data.shape)
         _, _, _, CI, CO = get_const_tuple(kernel.shape)
         if target.target_name == "cuda":
-            if nvcc.have_tensorcore(tvm.gpu(0).compute_version):
+            if nvcc.have_tensorcore("7.0"):
                 if (N % 16 == 0 and CI % 16 == 0 and CO % 16 == 0) or \
                 (N % 8 == 0 and CI % 16 == 0 and CO % 32 == 0) or \
                 (N % 32 == 0 and CI % 16 == 0 and CO % 8 == 0):
@@ -373,7 +373,7 @@ def dense_strategy_cuda(attrs, inputs, out_type, target):
                 wrap_topi_schedule(topi.cuda.schedule_dense_large_batch),
                 name="dense_large_batch.cuda",
                 plevel=5)
-        if nvcc.have_tensorcore(tvm.gpu(0).compute_version):
+        if nvcc.have_tensorcore("7.0"):
             if(i % 16 == 0 and b % 16 == 0 and o % 16 == 0) \
                     or (i % 16 == 0 and b % 8 == 0 and o % 32 == 0) \
                     or (i % 16 == 0 and b % 32 == 0 and o % 8 == 0):
